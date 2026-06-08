@@ -8,8 +8,10 @@ It features a built-in React-based dashboard that replicates the UblockDNS cloud
 - **100% Local**: No DNS queries are sent to external UblockDNS servers.
 - **Dockerized**: The entire stack (Go DNS server + React UI) is bundled into a single lightweight Docker container.
 - **Modern Dashboard**: Sleek, dark-mode dashboard with real-time stats and query logs.
-- **Customizable**: Add/remove blocklists via `config.yaml` or directly from the UI.
-- **Privacy First**: You control the upstream DNS (defaults to 1.1.1.1).
+- **Timeseries Analytics**: Real-time traffic graph with adjustable timeframes (Past Hour to Past Month) and leaderboards for Top Queried and Top Blocked domains.
+- **Customizable & Live**: Add/remove blocklists and update Upstream DNS settings via the UI without restarting.
+- **Auto-Syncing**: Active blocklists are automatically re-downloaded and synced every 24 hours.
+- **Native Windows Integration**: Includes native proxy scripts to safely bypass Docker's port restrictions and instantly toggle system DNS.
 
 ## Prerequisites
 - Docker / Docker Desktop
@@ -32,6 +34,7 @@ Run the container, mounting the `config.yaml` file so your blocklist choices are
 docker run -d \
   --name local-ublockdns-ui \
   -v ${PWD}/config.yaml:/root/config.yaml \
+  -v ${PWD}/history.json:/root/history.json \
   -p 10053:53/udp \
   -p 8080:8080 \
   local-ublockdns-ui
@@ -47,13 +50,18 @@ Open your browser and navigate to:
 
 Windows natively runs the `dnscache` and `svchost.exe` services on port `53`, which prevents Docker from binding directly to port `53` without breaking Windows Networking.
 
-Because of this, the container exposes the DNS server on **UDP port 10053**.
+Because of this, the container exposes the DNS server on **UDP port 10053**. To use this as your system-wide DNS server on Windows, we've provided native integration scripts so you do NOT need third-party apps like YogaDNS.
 
-To use this as your system-wide DNS server on Windows, you cannot simply set `127.0.0.1` in the Windows Network Settings (because Windows will force queries to port `53`). Instead:
-1. Install a DNS proxy tool like **YogaDNS** or **SimpleDnsCrypt**.
-2. Configure the tool to forward all system DNS queries to `127.0.0.1:10053`.
-
-*(Alternatively, if you are on Linux or macOS and port 53 is free, you can run the container with `-p 53:53/udp` and natively set your DNS to `127.0.0.1`).*
+### Using the Native Windows Scripts
+1. Build the lightweight Go proxy by running:
+   ```bash
+   cd cmd/proxy && go build -o proxy.exe
+   ```
+2. Double-click **`Start-UblockDNS.bat`**.
+   - This script runs a tiny background `proxy.exe` on `127.0.0.2:53` (bypassing the Docker `127.0.0.1` conflict).
+   - It intercepts standard port `53` system queries and forwards them to the Docker container on port `10053`.
+   - It also automatically updates your Windows Network Adapter to point to this new DNS server.
+3. You can click the **ENABLE** and **DISABLE** buttons on your dashboard to toggle this proxy on and off at any time!
 
 ## Configuration
 

@@ -6,3 +6,7 @@ ublockdns-*
 *.test
 coverage.out
 .DS_Store
+history.json
+*.exe
+*.txt
+data/

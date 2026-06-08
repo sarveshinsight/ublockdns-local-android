@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/ugzv/ublockdnsclient/internal/api"
 	"github.com/ugzv/ublockdnsclient/internal/config"
@@ -41,6 +42,21 @@ func main() {
 	go func() {
 		if err := server.ListenAndServe(); err != nil {
 			log.Fatalf("DNS server failed: %v", err)
+		}
+	}()
+
+	// 24-Hour automatic blocklist updater
+	go func() {
+		importTime := time.NewTicker(24 * time.Hour)
+		defer importTime.Stop()
+		for range importTime.C {
+			log.Println("Running automatic 24-hour blocklist update...")
+			// Reloading config will re-download the remote blocklists
+			if err := server.ReloadConfig(cfg); err != nil {
+				log.Printf("Failed to automatically update blocklists: %v", err)
+			} else {
+				log.Println("Successfully updated all blocklists!")
+			}
 		}
 	}()
 

@@ -1,15 +1,17 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { Shield, ShieldAlert, Settings, LogOut, DownloadCloud } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import './index.css'
 
 export default function App() {
-  const [stats, setStats] = useState({ total_queries: 0, blocked: 0, block_rate: 0 })
+  const [stats, setStats] = useState({ total_queries: 0, blocked: 0, block_rate: 0, top_queried: [], top_blocked: [], history: [] })
   const [logs, setLogs] = useState([])
   const [config, setConfig] = useState(null)
   
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showExceptions, setShowExceptions] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
+  const [timeframe, setTimeframe] = useState(24) // hours
 
   const fetchData = async () => {
     try {
@@ -17,11 +19,19 @@ export default function App() {
       if (statsRes.ok) setStats(await statsRes.json())
 
       const logsRes = await fetch('/api/logs')
-      if (logsRes.ok) setLogs(await logsRes.json())
+      if (logsRes.ok) {
+        const data = await logsRes.json()
+        setLogs(data || [])
+      }
       
       if (!config) {
         const configRes = await fetch('/api/config')
-        if (configRes.ok) setConfig(await configRes.json())
+        if (configRes.ok) {
+          const cfgData = await configRes.json()
+          cfgData.blocklists = cfgData.blocklists || []
+          cfgData.custom_rules = cfgData.custom_rules || []
+          setConfig(cfgData)
+        }
       }
     } catch (err) {
       console.error(err)
@@ -54,14 +64,60 @@ export default function App() {
     })
   }
 
-  // Generate fake chart data since we don't store historical timeseries in backend right now
-  const chartData = [
-    { time: '11:30 PM', queries: 10, blocked: 2 },
-    { time: '03:30 AM', queries: 5, blocked: 1 },
-    { time: '07:30 AM', queries: 25, blocked: 8 },
-    { time: '11:30 AM', queries: Math.max(0, stats.total_queries - 20), blocked: Math.max(0, stats.blocked - 5) },
-    { time: 'Now', queries: stats.total_queries, blocked: stats.blocked },
-  ]
+  const saveSettings = async (e) => {
+    e.preventDefault()
+    if (!config) return
+    const fd = new FormData(e.target)
+    const newUpstream = fd.get('upstream_dns') || config.upstream_dns
+    const newConfig = { ...config, upstream_dns: newUpstream }
+    setConfig(newConfig)
+    await fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    })
+    setShowSettings(false)
+  }
+
+  const chartData = useMemo(() => {
+    const hist = stats.history || []
+    if (hist.length === 0) {
+      return [{ time: 'Now', queries: stats.total_queries, blocked: stats.blocked }]
+    }
+    
+    const now = Math.floor(Date.now() / 1000)
+    const cutoff = now - (timeframe * 3600)
+    
+    // Filter history based on timeframe
+    let filtered = hist.filter(h => h.timestamp >= cutoff)
+    
+    // If not enough data points, pad the beginning so the graph looks nice
+    if (filtered.length < 5) {
+      const padding = []
+      for (let i = 5 - filtered.length; i > 0; i--) {
+        const padTime = new Date((now - (i * 3600)) * 1000)
+        padding.push({
+          time: padTime.getHours() + ':00',
+          queries: 0,
+          blocked: 0
+        })
+      }
+      filtered = [...padding, ...filtered]
+    }
+    
+    return filtered.map(h => {
+      // If it has a timestamp from backend, format it
+      if (h.timestamp) {
+        const d = new Date(h.timestamp * 1000)
+        return {
+          time: d.getHours() + ':00',
+          queries: h.queries,
+          blocked: h.blocked
+        }
+      }
+      return h // padded elements
+    })
+  }, [stats.history, timeframe, stats.total_queries, stats.blocked])
 
   const knownLists = [
     { name: "HaGeZi Multi NORMAL", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/normal.txt", desc: "Balanced DNS-native ads and tracker blocking" },
@@ -103,7 +159,20 @@ export default function App() {
           </div>
 
           <div className="card">
-            <div className="card-header">Activity</div>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Activity</span>
+              <select 
+                value={timeframe} 
+                onChange={(e) => setTimeframe(Number(e.target.value))}
+                style={{ backgroundColor: '#0d0d0d', color: '#e0e0e0', border: '1px solid #2a2a2a', borderRadius: '4px', padding: '2px 8px', outline: 'none', fontSize: '0.8rem' }}
+              >
+                <option value={1}>Past Hour</option>
+                <option value={24}>24 Hours</option>
+                <option value={48}>48 Hours</option>
+                <option value={72}>72 Hours</option>
+                <option value={720}>Past Month</option>
+              </select>
+            </div>
             <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', fontSize: '0.8rem' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{width: 8, height: 8, borderRadius: '50%', backgroundColor: '#888'}}></div> Queries</div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{width: 8, height: 8, borderRadius: '50%', backgroundColor: '#e63946'}}></div> Blocked</div>
@@ -127,6 +196,34 @@ export default function App() {
                   <Area type="monotone" dataKey="blocked" stroke="#e63946" fillOpacity={1} fill="url(#colorBlocked)" />
                 </AreaChart>
               </ResponsiveContainer>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
+            <div className="card" style={{ flex: 1 }}>
+              <div className="card-header">Top Queried Domains</div>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
+                {(stats.top_queried || []).length === 0 && <li style={{color: '#888'}}>No queries yet</li>}
+                {(stats.top_queried || []).map((item, i) => (
+                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0' }}>
+                    <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
+                    <span style={{color: '#888'}}>{item.count}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+            
+            <div className="card" style={{ flex: 1 }}>
+              <div className="card-header">Top Blocked Domains</div>
+              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
+                {(stats.top_blocked || []).length === 0 && <li style={{color: '#888'}}>No blocked queries yet</li>}
+                {(stats.top_blocked || []).map((item, i) => (
+                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e63946' }}>
+                    <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
+                    <span style={{color: '#888'}}>{item.count}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           </div>
 
@@ -185,8 +282,18 @@ export default function App() {
                 <span style={{color: '#888'}}>UDP</span>
               </div>
             </div>
-            <button className="btn btn-primary" style={{ width: '100%', marginBottom: '1rem' }}>CONNECT DEVICE</button>
-            <button className="btn" style={{ width: '100%' }}><Settings size={16} style={{marginRight: '8px', verticalAlign: 'middle'}}/> SETTINGS</button>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '1rem' }}>
+              <a href="ublockdns://enable" style={{ textDecoration: 'none', flex: 1 }}>
+                <button className="btn btn-primary" style={{ width: '100%', backgroundColor: '#2ecc71', color: '#000' }}>ENABLE</button>
+              </a>
+              <a href="ublockdns://disable" style={{ textDecoration: 'none', flex: 1 }}>
+                <button className="btn btn-primary" style={{ width: '100%', backgroundColor: '#e63946', color: '#fff' }}>DISABLE</button>
+              </a>
+            </div>
+            <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '1rem', marginTop: '-0.5rem', textAlign: 'center' }}>System DNS Toggle (Windows Only)</p>
+            <button className="btn" style={{ width: '100%' }} onClick={() => setShowSettings(true)}>
+              <Settings size={16} style={{marginRight: '8px', verticalAlign: 'middle'}}/> SETTINGS
+            </button>
           </div>
 
           <div className="card">
@@ -325,6 +432,39 @@ export default function App() {
                 <button className="btn" style={{ flex: 1 }}><DownloadCloud size={16} style={{marginRight: '8px', verticalAlign: 'middle'}}/> IMPORT</button>
                 <button className="btn" style={{ flex: 1 }}>COPY ALL</button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showSettings && (
+        <div className="modal-overlay" onClick={() => setShowSettings(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 700 }}>
+                <Settings color="#e0e0e0" size={20} />
+                Global Settings
+              </div>
+              <button className="close-btn" onClick={() => setShowSettings(false)}>X</button>
+            </div>
+            <div className="modal-body">
+              <form onSubmit={saveSettings}>
+                <div style={{ marginBottom: '1.5rem' }}>
+                  <label style={{ display: 'block', fontSize: '0.8rem', color: '#888', marginBottom: '8px'}}>Upstream DNS Server</label>
+                  <input 
+                    name="upstream_dns"
+                    type="text" 
+                    defaultValue={config?.upstream_dns || ''}
+                    placeholder="e.g. 1.1.1.1:53" 
+                    style={{ width: '100%', padding: '12px', backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', color: 'white', borderRadius: '4px', outline: 'none' }} 
+                  />
+                  <p style={{ fontSize: '0.75rem', color: '#888', marginTop: '8px' }}>The external DNS server used for resolving allowed domains.</p>
+                </div>
+                <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
+                  <button type="button" className="btn" onClick={() => setShowSettings(false)}>CANCEL</button>
+                  <button type="submit" className="btn btn-primary" style={{ backgroundColor: '#2ecc71', color: '#000' }}>SAVE CHANGES</button>
+                </div>
+              </form>
             </div>
           </div>
         </div>
