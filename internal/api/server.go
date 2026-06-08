@@ -1,0 +1,108 @@
+package api
+
+import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/ugzv/ublockdnsclient/internal/config"
+	"github.com/ugzv/ublockdnsclient/internal/resolver"
+)
+
+type Server struct {
+	addr        string
+	config      *config.Config
+	dnsResolver *resolver.Server
+	configPath  string
+}
+
+func NewServer(addr string, cfg *config.Config, dnsResolver *resolver.Server, configPath string) *Server {
+	return &Server{
+		addr:        addr,
+		config:      cfg,
+		dnsResolver: dnsResolver,
+		configPath:  configPath,
+	}
+}
+
+func (s *Server) Start() error {
+	r := chi.NewRouter()
+
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Logger)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins:   []string{"https://*", "http://*"},
+		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowedHeaders:   []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		ExposedHeaders:   []string{"Link"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}))
+
+	r.Route("/api", func(r chi.Router) {
+		r.Get("/config", s.handleGetConfig)
+		r.Post("/config", s.handleUpdateConfig)
+		r.Get("/logs", s.handleGetLogs)
+		r.Get("/stats", s.handleGetStats)
+	})
+
+	// Serve the static frontend
+	fs := http.FileServer(http.Dir("./web/dist"))
+	r.Handle("/*", fs)
+
+	log.Printf("Starting API server on %s", s.addr)
+	return http.ListenAndServe(s.addr, r)
+}
+
+func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.config)
+}
+
+func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
+	var newCfg config.Config
+	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update the struct
+	s.config.Blocklists = newCfg.Blocklists
+	s.config.CustomRules = newCfg.CustomRules
+	s.config.UpstreamDNS = newCfg.UpstreamDNS
+
+	// Save to disk
+	if err := config.SaveConfig(s.configPath, s.config); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Reload the DNS filtering engine
+	if err := s.dnsResolver.ReloadConfig(s.config); err != nil {
+		http.Error(w, "Error reloading config: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(s.config)
+}
+
+func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	logs := s.dnsResolver.GetRecentQueries()
+	json.NewEncoder(w).Encode(logs)
+}
+
+func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	stats := s.dnsResolver.GetStats()
+	json.NewEncoder(w).Encode(stats)
+}
