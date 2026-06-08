@@ -1,118 +1,66 @@
-# uBlockDNS Client
+# Local UblockDNS
 
-uBlockDNS Client is an independent project and is **not affiliated with, endorsed by, or related to uBlock Origin or its maintainer**.
+This is a **completely local**, self-hosted version of UblockDNS. It brings DNS-level ad and tracker blocking to your entire device using community-maintained filter lists, but unlike the cloud version, **all DNS resolution and blocklist parsing happens entirely on your own machine**.
 
-uBlockDNS Client brings DNS-level ad and tracker blocking to your entire device. It uses community-maintained filter lists such as EasyList and EasyPrivacy, applied at the DNS layer so apps, browsers, and background services are covered without per-browser extensions.
-
-**Website:** [ublockdns.com](https://ublockdns.com)
-
-uBlockDNS Client is intended for desktop and server environments where you want one install point, system-wide protection, and remote configuration through the uBlockDNS dashboard.
+It features a built-in React-based dashboard that replicates the UblockDNS cloud dashboard, allowing you to view real-time traffic, configure blocklists, and manage custom rules.
 
 ## Highlights
+- **100% Local**: No DNS queries are sent to external UblockDNS servers.
+- **Dockerized**: The entire stack (Go DNS server + React UI) is bundled into a single lightweight Docker container.
+- **Modern Dashboard**: Sleek, dark-mode dashboard with real-time stats and query logs.
+- **Customizable**: Add/remove blocklists via `config.yaml` or directly from the UI.
+- **Privacy First**: You control the upstream DNS (defaults to 1.1.1.1).
 
-- System-wide DNS filtering for browsers, apps, and background traffic
-- Encrypted upstream DNS-over-HTTPS connection to the uBlockDNS service
-- Real-time filter and custom rule updates from your dashboard
-- Local service model with status checks and service management commands
-- Cross-platform support for macOS, Linux, Windows 10+, and FreeBSD
+## Prerequisites
+- Docker / Docker Desktop
 
-## Install
+## Quick Start
 
-Create a free account at [ublockdns.com](https://ublockdns.com), then follow the setup guide in your dashboard. The guide covers all supported platforms with copy-paste commands and step-by-step instructions.
-
-Quick install for macOS and Linux:
-
-```sh
-curl -sSfL https://ublockdns.com/install.sh | sh -s -- <profile-id>
+### 1. Build the image
+Clone this repository and build the Docker image:
+```bash
+git clone https://github.com/sarveshinsight/ublockdns-local.git
+cd ublockdns-local
+docker build -t local-ublockdns-ui .
 ```
 
-Use `-L` so curl follows Cloudflare redirects on the hosted install script.
+### 2. Run the container
+Run the container, mounting the `config.yaml` file so your blocklist choices are saved.
+*Note: We map to port 10053 to avoid conflicts with Windows native DNS services.*
 
-During installation, you may be prompted for your Mac or Linux administrator password to update system DNS settings.
-
-Verify installer script checksum (Linux):
-
-```sh
-curl -sSfLO https://ublockdns.com/install.sh
-curl -sSfLO https://github.com/ugzv/ublockdnsclient/releases/latest/download/SCRIPT_SHA256SUMS
-grep " install.sh$" SCRIPT_SHA256SUMS | sha256sum -c -
-sh install.sh <profile-id>
+```bash
+docker run -d \
+  --name local-ublockdns-ui \
+  -v ${PWD}/config.yaml:/root/config.yaml \
+  -p 10053:53/udp \
+  -p 8080:8080 \
+  local-ublockdns-ui
 ```
 
-Windows 10 or later (PowerShell as Administrator):
+*(On Windows Command Prompt, use `%cd%\config.yaml` instead of `${PWD}`).*
 
-```powershell
-irm https://ublockdns.com/install?id=<profile-id> | iex
-```
+### 3. Access the Dashboard
+Open your browser and navigate to:
+[http://localhost:8080](http://localhost:8080)
 
-The dashboard uses this bootstrap flow. It downloads the installer from `/install-script`, which avoids Cloudflare redirect issues that can break direct `/install.ps1` downloads.
+## System-wide DNS Setup (Windows)
 
-Published Windows installers and binaries require Windows 10 or later. Windows 7, Windows 8, and Windows 8.1 are not supported.
+Windows natively runs the `dnscache` and `svchost.exe` services on port `53`, which prevents Docker from binding directly to port `53` without breaking Windows Networking.
 
-Verify installer script checksum (PowerShell):
+Because of this, the container exposes the DNS server on **UDP port 10053**.
 
-```powershell
-iwr https://ublockdns.com/install-script -OutFile install.ps1
-iwr https://github.com/ugzv/ublockdnsclient/releases/latest/download/SCRIPT_SHA256SUMS -OutFile SCRIPT_SHA256SUMS
-$expected = (Select-String -Path .\SCRIPT_SHA256SUMS -Pattern " install.ps1$").Line.Split()[0].ToLower()
-$actual = (Get-FileHash .\install.ps1 -Algorithm SHA256).Hash.ToLower()
-if ($actual -ne $expected) { throw "install.ps1 checksum mismatch" }
-powershell -ExecutionPolicy Bypass -File .\install.ps1 -ProfileId <profile-id>
-```
+To use this as your system-wide DNS server on Windows, you cannot simply set `127.0.0.1` in the Windows Network Settings (because Windows will force queries to port `53`). Instead:
+1. Install a DNS proxy tool like **YogaDNS** or **SimpleDnsCrypt**.
+2. Configure the tool to forward all system DNS queries to `127.0.0.1:10053`.
 
-A Windows GUI installer (.exe) is also available on the [releases page](https://github.com/ugzv/ublockdnsclient/releases).
+*(Alternatively, if you are on Linux or macOS and port 53 is free, you can run the container with `-p 53:53/udp` and natively set your DNS to `127.0.0.1`).*
 
-### Other platforms
+## Configuration
 
-The dashboard setup guide also covers Chrome, Firefox, iOS, Android, and routers. These use DNS-over-HTTPS directly and don't require this client.
+The `config.yaml` file controls the upstream DNS server, listen port, and the active blocklists. You can edit this file manually, or you can toggle blocklists directly from the Dashboard UI (which will automatically update `config.yaml` and reload the DNS engine without dropping packets).
 
-### Supported architectures
+## Architecture
 
-linux/amd64, linux/arm64, linux/armv7, darwin/amd64, darwin/arm64, windows/amd64, windows/arm64, freebsd/amd64
-
-## Usage
-
-```
-ublockdns install   -profile <profile-id>   Install as system service
-ublockdns uninstall                          Remove service and restore DNS
-ublockdns start                              Start the service
-ublockdns stop                               Stop the service
-ublockdns status                             Show service state and readiness details
-ublockdns status -json                       Show machine-readable status with ready_code and probe_error
-ublockdns wait-ready -timeout 45s            Wait until service and DNS are active
-ublockdns wait-ready -timeout 45s -json      Emit machine-readable readiness state for automation
-ublockdns version                            Print version
-```
-
-Manage your filter lists, custom rules, and query log from the [dashboard](https://ublockdns.com). The CLI is intentionally narrow: install the local service, verify it is healthy, and let the dashboard handle policy changes.
-
-## How it works
-
-The client runs a local DNS proxy on `127.0.0.1:53` and forwards all queries to the uBlockDNS service over encrypted DNS-over-HTTPS. The service evaluates each query against the filter lists and custom rules enabled for your profile, then returns either the normal DNS answer or a block response.
-
-When you update filter lists or custom rules in the dashboard, the client receives those changes in real time and flushes the local DNS cache automatically so new decisions take effect quickly.
-
-## Build from source
-
-Requires Go 1.23 or later.
-
-```sh
-go build -o ublockdns .
-sudo ./ublockdns install -profile <profile-id>
-```
-
-## Feedback and issues
-
-Found a bug or have a suggestion? [Open an issue](https://github.com/ugzv/ublockdnsclient/issues/new/choose).
-
-For blocking problems (ads getting through or a site wrongly blocked), check which filter lists you have enabled in your [dashboard](https://ublockdns.com) first. uBlockDNS uses community-maintained lists and does not control their contents.
-
-## Security
-
-Report security vulnerabilities privately through [GitHub Security Advisories](https://github.com/ugzv/ublockdnsclient/security/advisories/new). Do not open public issues for security problems.
-
-For trust model details, development transparency, and current audit status, see [SECURITY.md](SECURITY.md).
-
-## License
-
-MIT
+- **Backend**: Go (Golang) using `github.com/miekg/dns` for high-performance UDP DNS resolution.
+- **Frontend**: React + Vite, styled with modern CSS.
+- **Filtering**: Adguard-compatible `urlfilter` for high-speed domain matching.
