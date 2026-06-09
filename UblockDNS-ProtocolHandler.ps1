@@ -23,10 +23,10 @@ if ($action -eq "enable") {
     }
     Start-Process -FilePath ".\proxy.exe" -WindowStyle Hidden
     
-    # 2. Set DNS to 127.0.0.2
-    $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Name -notmatch "vEthernet|Virtual|Loopback|Bluetooth" } | Select-Object -First 1
-    if ($adapter) {
-        Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("127.0.0.2")
+    # 2. Set DNS to 127.0.0.2 (and ::1 for IPv6 to prevent leaks)
+    $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Name -notmatch "vEthernet|Virtual|Loopback|Bluetooth" }
+    foreach ($adapter in $adapters) {
+        Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses ("127.0.0.2", "::1")
     }
     
     # Optional: Pop up a tiny confirmation balloon or message box
@@ -38,10 +38,11 @@ if ($action -eq "enable") {
     Stop-Process -Name "proxy" -ErrorAction SilentlyContinue
     
     # 2. Revert DNS
-    $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Name -notmatch "vEthernet|Virtual|Loopback|Bluetooth" } | Select-Object -First 1
-    if ($adapter) {
+    $adapters = Get-NetAdapter | Where-Object { $_.Status -eq "Up" -and $_.Name -notmatch "vEthernet|Virtual|Loopback|Bluetooth" }
+    foreach ($adapter in $adapters) {
         Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ResetServerAddresses
     }
+    Clear-DnsClientCache
     
     Add-Type -AssemblyName System.Windows.Forms
     [System.Windows.Forms.MessageBox]::Show("UblockDNS Disabled! System DNS restored to automatic (DHCP).", "UblockDNS")
