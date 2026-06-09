@@ -1,16 +1,18 @@
-upstream_dns: 1.1.1.1:853
+upstream_dns: 1.1.1.1:853,9.9.9.9:853
 listen_addr: 0.0.0.0:53
 blocklists:
-    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/normal.txt
-    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt
     - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt
-    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/phishing.txt
+    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt
+    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt
     - https://big.oisd.nl/
+    - https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/fake.txt
     - https://small.oisd.nl/
-    - https://nsfw.oisd.nl/
     - https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts
     - https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext
     - https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
     - https://someonewhocares.org/hosts/hosts
 custom_rules:
-    - '||test-block.com^'
+    - '@@||test-block.com^'
+    - '@@||https://www.youtube.com/^'
+    - '@@||youtube.com^'
+    - '@@||www.youtube.com^'

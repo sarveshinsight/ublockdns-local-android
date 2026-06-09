@@ -7,10 +7,10 @@ type ListInfo struct {
 }
 
 var Catalog = []ListInfo{
-	{Name: "HaGeZi Multi NORMAL", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/normal.txt", Desc: "Balanced DNS-native ads and tracker blocking"},
+	{Name: "HaGeZi Multi NORMAL", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/multi.txt", Desc: "Balanced DNS-native ads and tracker blocking"},
 	{Name: "HaGeZi Multi PRO", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", Desc: "Stricter DNS-native blocking"},
 	{Name: "HaGeZi Threat Intelligence Feed", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", Desc: "DNS-native malware, phishing, scam"},
-	{Name: "HaGeZi Phishing URL Blocklist", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/phishing.txt", Desc: "Blocks known phishing and scam websites"},
+	{Name: "HaGeZi Fake Shops List", URL: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/fake.txt", Desc: "Blocks fake shops, scams, and domains abusing famous brands"},
 	{Name: "OISD Big", URL: "https://big.oisd.nl/", Desc: "Broad DNS-native blocklist"},
 	{Name: "OISD Small", URL: "https://small.oisd.nl/", Desc: "Lightweight blocklist for low-powered devices"},
 	{Name: "OISD NSFW", URL: "https://nsfw.oisd.nl/", Desc: "Blocks adult content and NSFW domains"},

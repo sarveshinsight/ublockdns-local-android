@@ -1,17 +1,15 @@
 package resolver
 
 import (
-	"encoding/json"
 	"log"
-	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/miekg/dns"
 	"github.com/ugzv/ublockdnsclient/internal/config"
+	"github.com/ugzv/ublockdnsclient/internal/db"
 	"github.com/ugzv/ublockdnsclient/internal/filtering"
 )
 
@@ -21,26 +19,6 @@ type Server struct {
 	engine   *filtering.Engine
 	client   *dns.Client
 	mu       sync.RWMutex
-
-	// Stats and Logs
-	totalQueries uint64
-	blocked      uint64
-	recentLogs   []LogEntry
-	topQueried   map[string]int
-	topBlocked   map[string]int
-	history      map[int64]*HourlyStat
-}
-
-type DomainStat struct {
-	Queries int `json:"queries"`
-	Blocked int `json:"blocked"`
-}
-
-type HourlyStat struct {
-	Timestamp int64                  `json:"timestamp"`
-	Queries   int                    `json:"queries"`
-	Blocked   int                    `json:"blocked"`
-	Domains   map[string]*DomainStat `json:"domains"`
 }
 
 type LogEntry struct {
@@ -53,22 +31,21 @@ type LogEntry struct {
 	ListID int    `json:"list_id,omitempty"`
 }
 
+type DomainCount struct {
+	Domain string `json:"domain"`
+	Count  int    `json:"count"`
+}
+
 func NewServer(addr string, upstream string, engine *filtering.Engine) *Server {
 	s := &Server{
-		addr:       addr,
-		upstream:   upstream,
-		engine:     engine,
-		topQueried: make(map[string]int),
-		topBlocked: make(map[string]int),
-		history:    make(map[int64]*HourlyStat),
+		addr:     addr,
+		upstream: upstream,
+		engine:   engine,
 		client: &dns.Client{
 			Net:     "udp4", // Force IPv4
 			Timeout: 5 * time.Second,
 		},
 	}
-	s.loadHistory()
-	s.loadLogs()
-	go s.historySaver()
 	return s
 }
 
@@ -78,7 +55,7 @@ func (s *Server) ListenAndServe() error {
 	
 	server := &dns.Server{
 		Addr:    s.addr,
-		Net:     "udp4", // Force IPv4 to fix Alpine mapping issue
+		Net:     "udp4",
 		Handler: mux,
 	}
 	log.Printf("Starting DNS server on %s, forwarding to %s", s.addr, s.upstream)
@@ -110,7 +87,6 @@ func (s *Server) ReloadConfig(cfg *config.Config) error {
 	s.upstream = cfg.UpstreamDNS
 	s.engine = newEngine
 	
-	// Automatically flush Windows DNS cache so browser respects the new list immediately
 	go exec.Command("ipconfig", "/flushdns").Run()
 	
 	log.Printf("ReloadConfig SUCCESS (and DNS cache flushed)")
@@ -124,52 +100,82 @@ func (s *Server) SetUpstream(up string) {
 }
 
 func (s *Server) GetRecentQueries() []LogEntry {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return append([]LogEntry(nil), s.recentLogs...) // return copy
-}
-
-type DomainCount struct {
-	Domain string `json:"domain"`
-	Count  int    `json:"count"`
+	rows, err := db.DB.Query("SELECT domain, type, action, speed, time, rule, list_id FROM query_logs ORDER BY id DESC LIMIT 5000")
+	var logs []LogEntry
+	if err != nil {
+		return logs
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var l LogEntry
+		var t string
+		var rule, listID interface{}
+		rows.Scan(&l.Domain, &l.Type, &l.Action, &l.Speed, &t, &rule, &listID)
+		l.Seen = t
+		if rule != nil {
+			l.Rule = string(rule.([]byte))
+		}
+		if listID != nil {
+			switch v := listID.(type) {
+			case int64:
+				l.ListID = int(v)
+			}
+		}
+		logs = append(logs, l)
+	}
+	return logs
 }
 
 func (s *Server) GetStats() map[string]interface{} {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	
+	var totalQ, totalB int
+	db.DB.QueryRow("SELECT COALESCE(SUM(count), 0), COALESCE(SUM(blocked_count), 0) FROM domain_history").Scan(&totalQ, &totalB)
+
 	blockRate := 0.0
-	if s.totalQueries > 0 {
-		blockRate = float64(s.blocked) / float64(s.totalQueries) * 100
-	}
-	
-	topQ := make([]DomainCount, 0, len(s.topQueried))
-	for d, c := range s.topQueried {
-		topQ = append(topQ, DomainCount{d, c})
-	}
-	sort.Slice(topQ, func(i, j int) bool { return topQ[i].Count > topQ[j].Count })
-	if len(topQ) > 10 {
-		topQ = topQ[:10]
+	if totalQ > 0 {
+		blockRate = float64(totalB) / float64(totalQ) * 100
 	}
 
-	topB := make([]DomainCount, 0, len(s.topBlocked))
-	for d, c := range s.topBlocked {
-		topB = append(topB, DomainCount{d, c})
-	}
-	sort.Slice(topB, func(i, j int) bool { return topB[i].Count > topB[j].Count })
-	if len(topB) > 10 {
-		topB = topB[:10]
+	topQ := []DomainCount{}
+	rowsQ, _ := db.DB.Query("SELECT domain, count FROM domain_history ORDER BY count DESC LIMIT 10")
+	if rowsQ != nil {
+		defer rowsQ.Close()
+		for rowsQ.Next() {
+			var dc DomainCount
+			rowsQ.Scan(&dc.Domain, &dc.Count)
+			topQ = append(topQ, dc)
+		}
 	}
 
-	histArr := make([]*HourlyStat, 0, len(s.history))
-	for _, h := range s.history {
-		histArr = append(histArr, h)
+	topB := []DomainCount{}
+	rowsB, _ := db.DB.Query("SELECT domain, blocked_count FROM domain_history WHERE blocked_count > 0 ORDER BY blocked_count DESC LIMIT 10")
+	if rowsB != nil {
+		defer rowsB.Close()
+		for rowsB.Next() {
+			var dc DomainCount
+			rowsB.Scan(&dc.Domain, &dc.Count)
+			topB = append(topB, dc)
+		}
 	}
-	sort.Slice(histArr, func(i, j int) bool { return histArr[i].Timestamp < histArr[j].Timestamp })
+
+	histArr := []map[string]interface{}{}
+	rowsH, _ := db.DB.Query("SELECT bucket, queries, blocked FROM time_history ORDER BY bucket ASC")
+	if rowsH != nil {
+		defer rowsH.Close()
+		for rowsH.Next() {
+			var bucket int64
+			var q, b int
+			rowsH.Scan(&bucket, &q, &b)
+			histArr = append(histArr, map[string]interface{}{
+				"timestamp": bucket,
+				"queries":   q,
+				"blocked":   b,
+			})
+		}
+	}
 
 	return map[string]interface{}{
-		"total_queries": s.totalQueries,
-		"blocked":       s.blocked,
+		"total_queries": totalQ,
+		"blocked":       totalB,
 		"block_rate":    blockRate,
 		"top_queried":   topQ,
 		"top_blocked":   topB,
@@ -178,10 +184,11 @@ func (s *Server) GetStats() map[string]interface{} {
 }
 
 func (s *Server) GetDomainStats(domain string) map[string]interface{} {
+	var totalQ, totalB int
+	db.DB.QueryRow("SELECT count, blocked_count FROM domain_history WHERE domain = ?", domain).Scan(&totalQ, &totalB)
+
 	s.mu.RLock()
 	eng := s.engine
-	totalQ := s.topQueried[domain]
-	totalB := s.topBlocked[domain]
 	s.mu.RUnlock()
 	
 	isBlocked := false
@@ -196,23 +203,21 @@ func (s *Server) GetDomainStats(domain string) map[string]interface{} {
 		blockRate = float64(totalB) / float64(totalQ) * 100
 	}
 
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	histArr := make([]map[string]interface{}, 0)
-	for _, h := range s.history {
-		q := 0
-		b := 0
-		if dstat, ok := h.Domains[domain]; ok {
-			q = dstat.Queries
-			b = dstat.Blocked
+	histArr := []map[string]interface{}{}
+	rowsH, _ := db.DB.Query("SELECT bucket, queries, blocked FROM domain_time_history WHERE domain = ? ORDER BY bucket ASC", domain)
+	if rowsH != nil {
+		defer rowsH.Close()
+		for rowsH.Next() {
+			var bucket int64
+			var q, b int
+			rowsH.Scan(&bucket, &q, &b)
+			histArr = append(histArr, map[string]interface{}{
+				"timestamp": bucket,
+				"queries":   q,
+				"blocked":   b,
+			})
 		}
-		histArr = append(histArr, map[string]interface{}{
-			"timestamp": h.Timestamp,
-			"queries":   q,
-			"blocked":   b,
-		})
 	}
-	sort.Slice(histArr, func(i, j int) bool { return histArr[i]["timestamp"].(int64) < histArr[j]["timestamp"].(int64) })
 
 	return map[string]interface{}{
 		"domain":     domain,
@@ -228,8 +233,6 @@ func (s *Server) GetDomainStats(domain string) map[string]interface{} {
 
 func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 	start := time.Now()
-	
-	log.Printf("Received DNS query for: %v", r.Question)
 	
 	m := new(dns.Msg)
 	m.SetReply(r)
@@ -248,36 +251,12 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 	eng := s.engine
 	up := s.upstream
 	s.mu.RUnlock()
-
-	s.mu.Lock()
-	s.totalQueries++
-	s.topQueried[q.Name]++
-	s.mu.Unlock()
 	
-	// Pre-build log entry
-	logEntry := LogEntry{
-		Domain: q.Name,
-		Type:   qtypeStr,
-		Action: "ALLOWED",
-		Speed:  "",
-		Seen:   time.Now().Format(time.RFC3339),
-	}
-
 	isBlocked := false
 	ruleTxt := ""
 	listID := 0
 	if eng != nil {
 		isBlocked, ruleTxt, listID = eng.Check(q.Name, q.Qtype)
-	}
-
-	if isBlocked {
-		s.mu.Lock()
-		s.blocked++
-		s.topBlocked[q.Name]++
-		s.mu.Unlock()
-		logEntry.Action = "BLOCKED"
-		logEntry.Rule = ruleTxt
-		logEntry.ListID = listID
 	}
 
 	if isBlocked {
@@ -296,21 +275,14 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 			m.Rcode = dns.RcodeNameError // NXDOMAIN
 		}
 		
-		logEntry.Speed = time.Since(start).String()
-		s.addLog(logEntry)
+		speed := time.Since(start).String()
+		s.logQueryAsync(q.Name, qtypeStr, "BLOCKED", speed, ruleTxt, listID)
 		w.WriteMsg(m)
 		return
 	}
 
-	// Handle multi-upstream routing concurrently for fastest response
+	// Route to upstream
 	upstreams := strings.Split(up, ",")
-	
-	type result struct {
-		resp *dns.Msg
-		err  error
-	}
-	
-	// Filter valid upstreams
 	var validUpstreams []string
 	for _, u := range upstreams {
 		u = strings.TrimSpace(u)
@@ -318,27 +290,26 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 			validUpstreams = append(validUpstreams, u)
 		}
 	}
-	
 	if len(validUpstreams) == 0 {
-		validUpstreams = []string{"1.1.1.1:53"} // Fallback
+		validUpstreams = []string{"1.1.1.1:53"}
 	}
 
-	log.Printf("Routing %s to upstreams: %v", q.Name, validUpstreams)
+	type result struct {
+		resp *dns.Msg
+		err  error
+	}
 
 	resc := make(chan result, len(validUpstreams))
-	
 	for _, u := range validUpstreams {
 		go func(addr string) {
 			netType := "udp4"
 			if strings.HasSuffix(addr, ":853") {
 				netType = "tcp-tls"
 			}
-			
 			client := &dns.Client{
 				Net:     netType,
 				Timeout: 5 * time.Second,
 			}
-			
 			res, _, err := client.Exchange(r.Copy(), addr)
 			resc <- result{res, err}
 		}(u)
@@ -346,116 +317,63 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 
 	var resp *dns.Msg
 	var err error
-	
 	for i := 0; i < len(validUpstreams); i++ {
 		res := <-resc
 		if res.err == nil && res.resp != nil {
 			resp = res.resp
 			err = nil
-			break // Fastest successful response wins
+			break
 		}
 		err = res.err
 	}
 
 	if err != nil || resp == nil {
 		m.Rcode = dns.RcodeServerFailure
-		
-		logEntry.Speed = time.Since(start).String()
-		s.addLog(logEntry)
+		speed := time.Since(start).String()
+		s.logQueryAsync(q.Name, qtypeStr, "ALLOWED", speed, "", 0)
 		w.WriteMsg(m)
 		return
 	}
 
-	logEntry.Speed = time.Since(start).String()
-	s.addLog(logEntry)
+	speed := time.Since(start).String()
+	s.logQueryAsync(q.Name, qtypeStr, "ALLOWED", speed, "", 0)
 	w.WriteMsg(resp)
 }
 
-func (s *Server) addLog(l LogEntry) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.recentLogs = append([]LogEntry{l}, s.recentLogs...)
-	if len(s.recentLogs) > 5000 {
-		s.recentLogs = s.recentLogs[:5000]
-	}
-
-	// Bucket by 5-minute intervals
-	bucket := time.Now().Truncate(5 * time.Minute).Unix()
-	if s.history[bucket] == nil {
-		s.history[bucket] = &HourlyStat{Timestamp: bucket, Domains: make(map[string]*DomainStat)}
-	}
-	s.history[bucket].Queries++
-	
-	if s.history[bucket].Domains == nil {
-		s.history[bucket].Domains = make(map[string]*DomainStat)
-	}
-	if s.history[bucket].Domains[l.Domain] == nil {
-		s.history[bucket].Domains[l.Domain] = &DomainStat{}
-	}
-	s.history[bucket].Domains[l.Domain].Queries++
-
-	if l.Action == "BLOCKED" {
-		s.history[bucket].Blocked++
-		s.history[bucket].Domains[l.Domain].Blocked++
-	}
-	
-	// Aggressive cleanup: keep only last 30 days (30 * 24 * 12 = 8640 buckets)
-	cutoff := bucket - (30 * 24 * 3600)
-	for ts := range s.history {
-		if ts < cutoff {
-			delete(s.history, ts)
+func (s *Server) logQueryAsync(domain, qtype, action, speed, rule string, listID int) {
+	// Trim trailing dot
+	domain = strings.TrimSuffix(domain, ".")
+	go func() {
+		b := 0
+		if action == "BLOCKED" {
+			b = 1
 		}
-	}
-}
-
-func (s *Server) loadHistory() {
-	b, err := os.ReadFile("history.json")
-	if err == nil {
-		var h map[int64]*HourlyStat
-		if err := json.Unmarshal(b, &h); err == nil {
-			s.history = h
-		}
-	}
-}
-
-func (s *Server) saveHistory() {
-	s.mu.RLock()
-	b, err := json.Marshal(s.history)
-	s.mu.RUnlock()
-	if err == nil {
-		os.WriteFile("history.json", b, 0644)
-	}
-}
-
-func (s *Server) loadLogs() {
-	b, err := os.ReadFile("logs.json")
-	if err == nil {
-		var l []LogEntry
-		if err := json.Unmarshal(b, &l); err == nil {
-			s.recentLogs = l
-		}
-	}
-}
-
-func (s *Server) saveLogs() {
-	s.mu.RLock()
-	b, err := json.Marshal(s.recentLogs)
-	s.mu.RUnlock()
-	if err == nil {
-		os.WriteFile("logs.json", b, 0644)
-	}
-}
-
-func (s *Server) historySaver() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		s.saveHistory()
-		s.saveLogs()
-	}
+		
+		// Insert into query_logs
+		db.DB.Exec("INSERT INTO query_logs (domain, type, action, speed, rule, list_id) VALUES (?, ?, ?, ?, ?, ?)",
+			domain, qtype, action, speed, rule, listID)
+			
+		// Upsert domain_history
+		db.DB.Exec(`INSERT INTO domain_history (domain, count, blocked_count) VALUES (?, 1, ?) 
+			ON CONFLICT(domain) DO UPDATE SET count = count + 1, blocked_count = blocked_count + ?`, 
+			domain, b, b)
+			
+		bucket := time.Now().Truncate(5 * time.Minute).Unix()
+		// Upsert time_history
+		db.DB.Exec(`INSERT INTO time_history (bucket, queries, blocked) VALUES (?, 1, ?) 
+			ON CONFLICT(bucket) DO UPDATE SET queries = queries + 1, blocked = blocked + ?`, 
+			bucket, b, b)
+			
+		// Upsert domain_time_history
+		db.DB.Exec(`INSERT INTO domain_time_history (domain, bucket, queries, blocked) VALUES (?, ?, 1, ?) 
+			ON CONFLICT(domain, bucket) DO UPDATE SET queries = queries + 1, blocked = blocked + ?`, 
+			domain, bucket, b, b)
+			
+		// Cleanup old query_logs (keep roughly last 10k by deleting everything smaller than max(id)-10000)
+		db.DB.Exec("DELETE FROM query_logs WHERE id < (SELECT MAX(id) FROM query_logs) - 10000")
+	}()
 }
 
 func (s *Server) Save() {
-	s.saveHistory()
-	s.saveLogs()
+	// No-op, SQLite handles persistence
 }

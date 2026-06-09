@@ -9,32 +9,76 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/ugzv/ublockdnsclient/internal/config"
+	"github.com/ugzv/ublockdnsclient/internal/db"
 )
 
 type Updater struct {
 	dataDir        string
 	onSyncComplete func()
+	ForceSync      chan bool
 }
 
 func NewUpdater(dataDir string, onSyncComplete func()) *Updater {
-	return &Updater{dataDir: dataDir, onSyncComplete: onSyncComplete}
+	return &Updater{dataDir: dataDir, onSyncComplete: onSyncComplete, ForceSync: make(chan bool, 1)}
 }
 
 func (u *Updater) Start(ctx context.Context) {
-	u.SyncMaster()
+	db.DB.Exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT)")
 
-	ticker := time.NewTicker(24 * time.Hour)
+	var lastUpdateStr string
+	err := db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_update'").Scan(&lastUpdateStr)
+	var lastUpdate time.Time
+	if err == nil {
+		ts, _ := strconv.ParseInt(lastUpdateStr, 10, 64)
+		lastUpdate = time.Unix(ts, 0)
+	}
+
+	now := time.Now()
+	y, m, d := now.Date()
+	todayMidnight := time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+
+	// Catch-up logic: If we never updated today (after 12:00 AM), do it now.
+	if lastUpdate.Before(todayMidnight) {
+		u.SyncMaster()
+	}
+
 	for {
+		now = time.Now()
+		nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+		duration := nextMidnight.Sub(now)
+
+		timer := time.NewTimer(duration)
+
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
+		case <-timer.C:
+			u.SyncMaster()
+		case <-u.ForceSync:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			u.SyncMaster()
 		}
 	}
+}
+
+func (u *Updater) GetStatus() (lastUpdate int64, nextUpdate int64) {
+	var lastUpdateStr string
+	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_update'").Scan(&lastUpdateStr)
+	ts, _ := strconv.ParseInt(lastUpdateStr, 10, 64)
+	
+	now := time.Now()
+	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
+	return ts, nextMidnight.Unix()
 }
 
 func (u *Updater) SyncMaster() {
@@ -63,7 +107,6 @@ func (u *Updater) SyncMaster() {
 			continue
 		}
 		
-		// Bypass blocklists blocking Go user agents
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
 		resp, err := client.Do(req)
@@ -93,6 +136,11 @@ func (u *Updater) SyncMaster() {
 			continue
 		}
 	}
+	
+	// Record successful sync timestamp in SQLite
+	nowUnix := fmt.Sprintf("%d", time.Now().Unix())
+	db.DB.Exec("INSERT INTO app_state (key, value) VALUES ('last_update', ?) ON CONFLICT(key) DO UPDATE SET value = ?", nowUnix, nowUnix)
+	
 	log.Printf("Updater: master list repository sync complete.")
 	
 	if u.onSyncComplete != nil {

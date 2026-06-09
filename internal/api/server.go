@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/cors"
 	"github.com/ugzv/ublockdnsclient/internal/config"
 	"github.com/ugzv/ublockdnsclient/internal/resolver"
+	"github.com/ugzv/ublockdnsclient/internal/updater"
 )
 
 type Server struct {
@@ -18,14 +19,16 @@ type Server struct {
 	config      *config.Config
 	dnsResolver *resolver.Server
 	configPath  string
+	updater     *updater.Updater
 }
 
-func NewServer(addr string, cfg *config.Config, dnsResolver *resolver.Server, configPath string) *Server {
+func NewServer(addr string, cfg *config.Config, dnsResolver *resolver.Server, configPath string, updater *updater.Updater) *Server {
 	return &Server{
 		addr:        addr,
 		config:      cfg,
 		dnsResolver: dnsResolver,
 		configPath:  configPath,
+		updater:     updater,
 	}
 }
 
@@ -54,6 +57,8 @@ func (s *Server) Start() error {
 		r.Get("/stats", s.handleGetStats)
 		r.Get("/domain/{domain}", s.handleGetDomain)
 		r.Get("/catalog", s.handleGetCatalog)
+		r.Get("/updater/status", s.handleGetUpdaterStatus)
+		r.Post("/updater/force", s.handleForceUpdate)
 	})
 
 	// Serve the static frontend
@@ -129,4 +134,23 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetCatalog(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(config.Catalog)
+}
+
+func (s *Server) handleGetUpdaterStatus(w http.ResponseWriter, r *http.Request) {
+	last, next := s.updater.GetStatus()
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]int64{
+		"lastUpdate": last,
+		"nextUpdate": next,
+	})
+}
+
+func (s *Server) handleForceUpdate(w http.ResponseWriter, r *http.Request) {
+	// Non-blocking send
+	select {
+	case s.updater.ForceSync <- true:
+	default:
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"status": "Update triggered"})
 }

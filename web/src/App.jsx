@@ -27,6 +27,7 @@ const DomainIcon = ({ domain }) => {
 export default function App() {
   const [stats, setStats] = useState({ total_queries: 0, blocked: 0, block_rate: 0, top_queried: [], top_blocked: [], history: [] })
   const [logs, setLogs] = useState([])
+  const [updaterStatus, setUpdaterStatus] = useState(null)
   const [visibleLogs, setVisibleLogs] = useState(15)
   const [config, setConfig] = useState(null)
   const [customRuleInput, setCustomRuleInput] = useState("")
@@ -49,6 +50,11 @@ export default function App() {
         const data = await logsRes.json()
         setLogs(data || [])
       }
+
+      try {
+        const upRes = await fetch('/api/updater/status')
+        if (upRes.ok) setUpdaterStatus(await upRes.json())
+      } catch (e) {}
       
       if (!config) {
         const configRes = await fetch('/api/config')
@@ -112,6 +118,28 @@ export default function App() {
     })
     setShowSettings(false)
   }
+
+  const forceUpdate = async () => {
+    try {
+      await fetch('/api/updater/force', { method: 'POST' })
+      setTimeout(fetchData, 1000)
+    } catch (e) {}
+  }
+
+  const formatTimeUntil = (nextTimestamp) => {
+    if (!nextTimestamp) return "Calculating...";
+    const diff = (nextTimestamp * 1000) - Date.now();
+    if (diff <= 0) return "Updating...";
+    const hours = Math.floor(diff / (1000 * 60 * 60));
+    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+    return `${hours}h ${minutes}m`;
+  };
+
+  const formatLastUpdate = (lastTimestamp) => {
+    if (!lastTimestamp) return "Never";
+    const d = new Date(lastTimestamp * 1000);
+    return d.toLocaleString();
+  };
 
   const generateChartData = (historyList, tf) => {
     const hist = historyList || []
@@ -537,6 +565,26 @@ export default function App() {
             <p style={{ fontSize: '0.75rem', color: '#888', marginBottom: '1rem', marginTop: '-0.5rem', textAlign: 'center' }}>System DNS Toggle (Windows Only)</p>
             <button className="btn" style={{ width: '100%' }} onClick={() => setShowSettings(true)}>
               <Settings size={16} style={{marginRight: '8px', verticalAlign: 'middle'}}/> SETTINGS
+            </button>
+          </div>
+
+          <div className="card">
+            <div className="card-header" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+               <div style={{width: 24, height: 24, backgroundColor: '#3498db', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                 <DownloadCloud size={14} color="#fff" />
+               </div>
+               BLOCKLIST UPDATER
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', fontSize: '0.85rem' }}>
+              <span style={{color: '#888'}}>Next Update In:</span>
+              <span style={{color: '#e0e0e0', fontWeight: 'bold'}}>{formatTimeUntil(updaterStatus?.nextUpdate)}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+              <span style={{color: '#888'}}>Last Update:</span>
+              <span style={{color: '#e0e0e0'}}>{formatLastUpdate(updaterStatus?.lastUpdate)}</span>
+            </div>
+            <button className="btn" style={{ width: '100%', backgroundColor: '#1a1a1a', border: '1px solid #333' }} onClick={forceUpdate}>
+              FORCE UPDATE NOW
             </button>
           </div>
 

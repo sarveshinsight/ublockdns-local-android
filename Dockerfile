@@ -34,4 +34,7 @@ COPY --from=frontend-builder /web/dist ./web/dist
 EXPOSE 53/udp
 EXPOSE 8080/tcp
 
+# Force Go garbage collector to aggressively return memory to OS
+ENV GOMEMLIMIT=100MiB
+
 CMD ["./server", "config.yaml"]

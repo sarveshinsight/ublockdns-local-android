@@ -9,6 +9,7 @@ import (
 
 	"github.com/ugzv/ublockdnsclient/internal/api"
 	"github.com/ugzv/ublockdnsclient/internal/config"
+	"github.com/ugzv/ublockdnsclient/internal/db"
 	"github.com/ugzv/ublockdnsclient/internal/resolver"
 	"github.com/ugzv/ublockdnsclient/internal/updater"
 )
@@ -28,6 +29,14 @@ func main() {
 	}
 
 	log.Printf("Loaded config: %v blocklists, %v custom rules", len(cfg.Blocklists), len(cfg.CustomRules))
+
+	dataDir := "./data"
+	os.MkdirAll(dataDir, 0755)
+
+	// Initialize SQLite Database
+	if err := db.InitDB(dataDir); err != nil {
+		log.Fatalf("Failed to initialize SQLite database: %v", err)
+	}
 
 	// Initialize DNS server with nil engine
 	server := resolver.NewServer(cfg.ListenAddr, cfg.UpstreamDNS, nil)
@@ -49,7 +58,6 @@ func main() {
 	}()
 
 	// Start the Master Updater service
-	dataDir := "./data"
 	updaterSvc := updater.NewUpdater(dataDir, func() {
 		if err := server.ReloadConfig(cfg); err != nil {
 			log.Printf("Failed to reload config after master sync: %v", err)
@@ -60,7 +68,7 @@ func main() {
 	go updaterSvc.Start(context.Background())
 
 	// Start API server in background
-	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath)
+	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath, updaterSvc)
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Fatalf("API server failed: %v", err)
