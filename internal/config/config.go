@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -28,10 +29,18 @@ func Load(path string) (*Config, error) {
 	if cfg.UpstreamDNS == "" {
 		cfg.UpstreamDNS = "1.1.1.1:53"
 	}
+	// Sanitize custom rules
+	for i, r := range cfg.CustomRules {
+		cfg.CustomRules[i] = strings.ReplaceAll(r, ".^", "^")
+	}
 	return &cfg, nil
 }
 
 func SaveConfig(filename string, cfg *Config) error {
+	// Sanitize before save
+	for i, r := range cfg.CustomRules {
+		cfg.CustomRules[i] = strings.ReplaceAll(r, ".^", "^")
+	}
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err

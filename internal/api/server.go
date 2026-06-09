@@ -52,6 +52,7 @@ func (s *Server) Start() error {
 		r.Post("/config", s.handleUpdateConfig)
 		r.Get("/logs", s.handleGetLogs)
 		r.Get("/stats", s.handleGetStats)
+		r.Get("/domain/{domain}", s.handleGetDomain)
 	})
 
 	// Serve the static frontend
@@ -85,11 +86,16 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reload the DNS filtering engine
-	if err := s.dnsResolver.ReloadConfig(s.config); err != nil {
-		http.Error(w, "Error reloading config: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Apply upstream change instantly so user doesn't have to wait for blocklists
+	s.dnsResolver.SetUpstream(s.config.UpstreamDNS)
+
+	// Reload the DNS filtering engine asynchronously to prevent API timeout
+	cfgCopy := *s.config
+	go func() {
+		if err := s.dnsResolver.ReloadConfig(&cfgCopy); err != nil {
+			log.Printf("Error reloading config asynchronously: %v", err)
+		}
+	}()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(s.config)
@@ -104,5 +110,17 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	stats := s.dnsResolver.GetStats()
+	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
+	domain := chi.URLParam(r, "domain")
+	if domain == "" {
+		http.Error(w, "missing domain", http.StatusBadRequest)
+		return
+	}
+	
+	w.Header().Set("Content-Type", "application/json")
+	stats := s.dnsResolver.GetDomainStats(domain)
 	json.NewEncoder(w).Encode(stats)
 }

@@ -2,6 +2,7 @@ package filtering
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"io"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/filterlist"
@@ -19,7 +21,7 @@ type Engine struct {
 	dnsEngine *urlfilter.DNSEngine
 }
 
-// DownloadLists downloads the given URLs to a local data directory.
+// DownloadLists downloads the given URLs to a local data directory, caching them for 24 hours.
 func DownloadLists(ctx context.Context, dataDir string, urls []string) ([]string, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, err
@@ -27,6 +29,15 @@ func DownloadLists(ctx context.Context, dataDir string, urls []string) ([]string
 
 	var paths []string
 	for i, u := range urls {
+		hash := fmt.Sprintf("%x", md5.Sum([]byte(u)))
+		filename := filepath.Join(dataDir, fmt.Sprintf("list_%s.txt", hash))
+		
+		info, err := os.Stat(filename)
+		if err == nil && info.Size() > 0 && time.Since(info.ModTime()) < 24*time.Hour {
+			paths = append(paths, filename)
+			continue
+		}
+
 		log.Printf("Downloading blocklist %d: %s", i+1, u)
 		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 		if err != nil {
@@ -40,7 +51,6 @@ func DownloadLists(ctx context.Context, dataDir string, urls []string) ([]string
 			continue
 		}
 
-		filename := filepath.Join(dataDir, fmt.Sprintf("list_%d.txt", i))
 		f, err := os.Create(filename)
 		if err != nil {
 			resp.Body.Close()
@@ -96,27 +106,30 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 	return &Engine{dnsEngine: dnsEngine}, nil
 }
 
-// Check returns true if the domain is blocked.
-func (e *Engine) Check(domain string, qtype uint16) bool {
+// Check returns true if the domain is blocked, along with the rule text and list ID.
+func (e *Engine) Check(domain string, qtype uint16) (bool, string, int) {
 	// urlfilter requires domain ending without dot
 	domain = strings.TrimSuffix(domain, ".")
 	
 	res, matched := e.dnsEngine.Match(domain)
 	if !matched {
-		return false
+		return false, "", 0
 	}
 	
 	if res.NetworkRule != nil {
 		if res.NetworkRule.Whitelist {
-			return false
+			return false, "", 0
 		}
-		return true
+		return true, res.NetworkRule.Text(), int(res.NetworkRule.GetFilterListID())
 	}
 	
 	// Also check if any host rules matched (e.g. from /etc/hosts style lists)
-	if len(res.HostRulesV4) > 0 || len(res.HostRulesV6) > 0 {
-		return true
+	if len(res.HostRulesV4) > 0 {
+		return true, res.HostRulesV4[0].Text(), int(res.HostRulesV4[0].GetFilterListID())
+	}
+	if len(res.HostRulesV6) > 0 {
+		return true, res.HostRulesV6[0].Text(), int(res.HostRulesV6[0].GetFilterListID())
 	}
 	
-	return false
+	return false, "", 0
 }

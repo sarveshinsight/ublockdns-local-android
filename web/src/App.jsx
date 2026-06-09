@@ -6,11 +6,15 @@ import './index.css'
 export default function App() {
   const [stats, setStats] = useState({ total_queries: 0, blocked: 0, block_rate: 0, top_queried: [], top_blocked: [], history: [] })
   const [logs, setLogs] = useState([])
+  const [visibleLogs, setVisibleLogs] = useState(15)
   const [config, setConfig] = useState(null)
+  const [customRuleInput, setCustomRuleInput] = useState("")
   
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [showExceptions, setShowExceptions] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [selectedDomain, setSelectedDomain] = useState(null)
+  const [domainStats, setDomainStats] = useState(null)
   const [timeframe, setTimeframe] = useState(24) // hours
 
   const fetchData = async () => {
@@ -79,53 +83,170 @@ export default function App() {
     setShowSettings(false)
   }
 
-  const chartData = useMemo(() => {
-    const hist = stats.history || []
-    if (hist.length === 0) {
-      return [{ time: 'Now', queries: stats.total_queries, blocked: stats.blocked }]
-    }
+  const generateChartData = (historyList, tf) => {
+    const hist = historyList || []
+    const now = new Date()
     
-    const now = Math.floor(Date.now() / 1000)
-    const cutoff = now - (timeframe * 3600)
+    let buckets = []
+    let isDaily = tf > 72
+    let isHourly = tf > 1 && tf <= 72
+    let isMinutely = tf === 1
     
-    // Filter history based on timeframe
-    let filtered = hist.filter(h => h.timestamp >= cutoff)
-    
-    // If not enough data points, pad the beginning so the graph looks nice
-    if (filtered.length < 5) {
-      const padding = []
-      for (let i = 5 - filtered.length; i > 0; i--) {
-        const padTime = new Date((now - (i * 3600)) * 1000)
-        padding.push({
-          time: padTime.getHours() + ':00',
+    if (isDaily) {
+      const currentDay = Math.floor(now.getTime() / 1000 / 86400) * 86400
+      const days = tf / 24
+      
+      for (let i = days - 1; i >= 0; i--) {
+        const ts = currentDay - (i * 86400)
+        const d = new Date(ts * 1000)
+        buckets.push({
+          timestamp: ts,
+          time: `${d.getMonth() + 1}/${d.getDate()}`,
           queries: 0,
           blocked: 0
         })
       }
-      filtered = [...padding, ...filtered]
-    }
-    
-    return filtered.map(h => {
-      // If it has a timestamp from backend, format it
-      if (h.timestamp) {
-        const d = new Date(h.timestamp * 1000)
-        return {
-          time: d.getHours() + ':00',
-          queries: h.queries,
-          blocked: h.blocked
+      
+      hist.forEach(h => {
+        const dayTs = Math.floor(h.timestamp / 86400) * 86400
+        const bucket = buckets.find(b => b.timestamp === dayTs)
+        if (bucket) {
+          bucket.queries += h.queries || 0
+          bucket.blocked += h.blocked || 0
         }
+      })
+    } else if (isHourly) {
+      const currentHour = Math.floor(now.getTime() / 1000 / 3600) * 3600
+      for (let i = tf - 1; i >= 0; i--) {
+        const ts = currentHour - (i * 3600)
+        const d = new Date(ts * 1000)
+        let hours = d.getHours()
+        let ampm = hours >= 12 ? 'PM' : 'AM'
+        hours = hours % 12
+        hours = hours ? hours : 12
+        buckets.push({
+          timestamp: ts,
+          time: `${hours}:00 ${ampm}`,
+          queries: 0,
+          blocked: 0
+        })
       }
-      return h // padded elements
+      
+      hist.forEach(h => {
+        const hourTs = Math.floor(h.timestamp / 3600) * 3600
+        const bucket = buckets.find(b => b.timestamp === hourTs)
+        if (bucket) {
+          bucket.queries += h.queries || 0
+          bucket.blocked += h.blocked || 0
+        }
+      })
+    } else if (isMinutely) {
+      const current5Min = Math.floor(now.getTime() / 1000 / 300) * 300
+      
+      for (let i = 11; i >= 0; i--) {
+        const ts = current5Min - (i * 300)
+        const d = new Date(ts * 1000)
+        let hours = d.getHours()
+        let mins = d.getMinutes()
+        let ampm = hours >= 12 ? 'PM' : 'AM'
+        hours = hours % 12
+        hours = hours ? hours : 12
+        buckets.push({
+          timestamp: ts,
+          time: `${hours}:${mins.toString().padStart(2, '0')} ${ampm}`,
+          queries: 0,
+          blocked: 0
+        })
+      }
+      
+      hist.forEach(h => {
+        const minTs = Math.floor(h.timestamp / 300) * 300
+        const bucket = buckets.find(b => b.timestamp === minTs)
+        if (bucket) {
+          bucket.queries += h.queries || 0
+          bucket.blocked += h.blocked || 0
+        }
+      })
+    }
+    return buckets
+  }
+
+  const chartData = useMemo(() => generateChartData(stats.history, timeframe), [stats.history, timeframe])
+  const domainChartData = useMemo(() => generateChartData(domainStats?.history, timeframe), [domainStats?.history, timeframe])
+
+  const openDomainModal = async (domain) => {
+    setSelectedDomain(domain)
+    setDomainStats(null)
+    try {
+      const res = await fetch(`/api/domain/${domain}`)
+      if (res.ok) {
+        setDomainStats(await res.json())
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const addCustomRule = async (domain, isBlock) => {
+    if (!config) return
+    const cleanDomain = domain.replace(/^(?:\|\||@@\|\|)?(.*?)\^?$/, '$1')
+    if (!cleanDomain) return
+
+    const blockRule = `||${cleanDomain}^`
+    const allowRule = `@@||${cleanDomain}^`
+    const targetRule = isBlock ? blockRule : allowRule
+    const oppositeRule = isBlock ? allowRule : blockRule
+    
+    let currentRules = config.custom_rules || []
+    
+    // If the target rule already exists, do nothing
+    if (currentRules.includes(targetRule)) return
+    
+    // Remove the opposite rule if it exists
+    currentRules = currentRules.filter(r => r !== oppositeRule)
+    
+    const newRules = [...currentRules, targetRule]
+    const newConfig = { ...config, custom_rules: newRules }
+    setConfig(newConfig)
+    
+    // Optimistic UI update
+    if (domainStats && selectedDomain === cleanDomain) {
+      setDomainStats(prev => prev ? { ...prev, is_blocked: isBlock } : prev)
+    }
+
+    // Fire and forget
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).then(() => {
+      fetchData()
     })
-  }, [stats.history, timeframe, stats.total_queries, stats.blocked])
+  }
+
+  const updateUpstreamDNS = async (value) => {
+    if (!config) return
+    const newConfig = { ...config, upstream_dns: value }
+    setConfig(newConfig)
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).then(() => fetchData())
+  }
 
   const knownLists = [
     { name: "HaGeZi Multi NORMAL", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/normal.txt", desc: "Balanced DNS-native ads and tracker blocking" },
     { name: "HaGeZi Multi PRO", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", desc: "Stricter DNS-native blocking" },
-    { name: "OISD Big", url: "https://big.oisd.nl/", desc: "Broad DNS-native blocklist" },
     { name: "HaGeZi Threat Intelligence Feed", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", desc: "DNS-native malware, phishing, scam" },
+    { name: "HaGeZi Phishing URL Blocklist", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/phishing.txt", desc: "Blocks known phishing and scam websites" },
+    { name: "OISD Big", url: "https://big.oisd.nl/", desc: "Broad DNS-native blocklist" },
+    { name: "OISD Small", url: "https://small.oisd.nl/", desc: "Lightweight blocklist for low-powered devices" },
+    { name: "OISD NSFW", url: "https://nsfw.oisd.nl/", desc: "Blocks adult content and NSFW domains" },
     { name: "Steven Black's Unified Hosts", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", desc: "Comprehensive malware and adware domain blocklist" },
-    { name: "Phishing URL Blocklist", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/phishing.txt", desc: "Blocks known phishing and scam websites" }
+    { name: "Peter Lowe's Ad & Tracking List", url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext", desc: "Blocks ad and tracking servers" },
+    { name: "AdGuard DNS Filter", url: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt", desc: "AdGuard's specific filter for DNS-level blocking" },
+    { name: "Dan Pollock's hosts file", url: "https://someonewhocares.org/hosts/hosts", desc: "Blocks ads, trackers, and shocking sites" }
   ]
 
   return (
@@ -205,7 +326,7 @@ export default function App() {
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
                 {(stats.top_queried || []).length === 0 && <li style={{color: '#888'}}>No queries yet</li>}
                 {(stats.top_queried || []).map((item, i) => (
-                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0' }}>
+                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0', cursor: 'pointer' }} onClick={() => openDomainModal(item.domain)}>
                     <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
                     <span style={{color: '#888'}}>{item.count}</span>
                   </li>
@@ -218,7 +339,7 @@ export default function App() {
               <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
                 {(stats.top_blocked || []).length === 0 && <li style={{color: '#888'}}>No blocked queries yet</li>}
                 {(stats.top_blocked || []).map((item, i) => (
-                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e63946' }}>
+                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e63946', cursor: 'pointer' }} onClick={() => openDomainModal(item.domain)}>
                     <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
                     <span style={{color: '#888'}}>{item.count}</span>
                   </li>
@@ -240,6 +361,7 @@ export default function App() {
                 <p>Set up your device to point to 127.0.0.1:10053, then try visiting any website.</p>
               </div>
             ) : (
+              <>
               <table className="data-table">
                 <thead>
                   <tr>
@@ -251,8 +373,8 @@ export default function App() {
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.slice(0, 10).map((log, i) => (
-                    <tr key={i}>
+                  {logs.slice(0, visibleLogs).map((log, i) => (
+                    <tr key={i} style={{ cursor: 'pointer' }} onClick={() => openDomainModal(log.domain)}>
                       <td>
                         <div className="text-truncate" title={log.domain}>{log.domain}</div>
                       </td>
@@ -268,13 +390,57 @@ export default function App() {
                   ))}
                 </tbody>
               </table>
+              {logs.length > visibleLogs && (
+                <div style={{ textAlign: 'center', marginTop: '10px' }}>
+                  <button className="btn" onClick={() => setVisibleLogs(prev => prev + 15)}>
+                    View More
+                  </button>
+                </div>
+              )}
+              </>
             )}
           </div>
         </div>
 
         <div className="right-panel">
           <div className="card">
-            <div className="card-header">Account</div>
+            <div className="card-header" style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+               <div style={{width: 24, height: 24, backgroundColor: '#e63946', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                 <ShieldAlert size={14} color="#fff" />
+               </div>
+               CONNECTION
+            </div>
+            <div style={{ marginBottom: '1.5rem', borderBottom: '1px solid #2a2a2a', paddingBottom: '1.5rem' }}>
+              <label style={{ display: 'block', fontSize: '0.8rem', color: '#888', marginBottom: '8px'}}>DNS Provider</label>
+              <select 
+                style={{ width: '100%', padding: '12px', backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', borderRadius: '4px', color: '#e0e0e0', outline: 'none' }}
+                value={config?.upstream_dns || "1.1.1.1:853,8.8.8.8:853"}
+                onChange={(e) => updateUpstreamDNS(e.target.value)}
+              >
+                <optgroup label="Presets (Concurrent DoT)">
+                  <option value="1.1.1.1:853,8.8.8.8:853">Automatic (Cloudflare + Google)</option>
+                  <option value="1.1.1.1:853,9.9.9.9:853">Privacy Focus (Cloudflare + Quad9)</option>
+                  <option value="9.9.9.9:853,94.140.14.14:853">Security Focus (Quad9 + AdGuard DNS)</option>
+                  <option value="94.140.14.14:853,1.1.1.3:853">Filtering Focus (AdGuard DNS + Cloudflare Family)</option>
+                </optgroup>
+                <optgroup label="Specific Providers (DoT)">
+                  <option value="8.8.8.8:853">Google Public DNS</option>
+                  <option value="1.1.1.1:853">Cloudflare</option>
+                  <option value="9.9.9.9:853">Quad9</option>
+                  <option value="94.140.14.14:853">AdGuard DNS</option>
+                </optgroup>
+              </select>
+              <p style={{fontSize: '0.7rem', color: '#888', marginTop: '8px', marginBottom: 0}}>
+                {config?.upstream_dns === "1.1.1.1:853,9.9.9.9:853" ? "Uses Cloudflare + Quad9 securely (DoT)." :
+                 config?.upstream_dns === "9.9.9.9:853,94.140.14.14:853" ? "Uses Quad9 + AdGuard DNS securely (DoT)." :
+                 config?.upstream_dns === "94.140.14.14:853,1.1.1.3:853" ? "Uses AdGuard DNS + Cloudflare Family securely (DoT)." :
+                 config?.upstream_dns === "8.8.8.8:853" ? "Uses Google Public DNS securely (DoT)." :
+                 config?.upstream_dns === "1.1.1.1:853" ? "Uses Cloudflare securely (DoT)." :
+                 config?.upstream_dns === "9.9.9.9:853" ? "Uses Quad9 securely (DoT)." :
+                 config?.upstream_dns === "94.140.14.14:853" ? "Uses AdGuard DNS securely (DoT)." :
+                 "Uses the fastest available secure route automatically."}
+              </p>
+            </div>
             <div style={{ marginBottom: '1.5rem' }}>
               <label style={{ display: 'block', fontSize: '0.8rem', color: '#888', marginBottom: '8px'}}>Local Device Address</label>
               <div style={{ padding: '12px', backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', borderRadius: '4px', fontSize: '0.9rem', display: 'flex', justifyContent: 'space-between' }}>
@@ -300,9 +466,9 @@ export default function App() {
             <div className="card-header">Protection</div>
             
             <div style={{ display: 'flex', border: '1px solid #2a2a2a', borderRadius: '4px', overflow: 'hidden', marginBottom: '1.5rem' }}>
-              <div style={{ flex: 1, padding: '8px', textAlign: 'center', borderRight: '1px solid #2a2a2a', cursor: 'pointer', backgroundColor: '#e63946' }}>Standard</div>
-              <div style={{ flex: 1, padding: '8px', textAlign: 'center', borderRight: '1px solid #2a2a2a', cursor: 'pointer' }}>Family</div>
-              <div style={{ flex: 1, padding: '8px', textAlign: 'center', cursor: 'pointer' }}>Strict</div>
+              <div onClick={() => updateUpstreamDNS('1.1.1.1:853,8.8.8.8:853')} style={{ flex: 1, padding: '8px', textAlign: 'center', borderRight: '1px solid #2a2a2a', cursor: 'pointer', backgroundColor: config?.upstream_dns === '1.1.1.1:853,8.8.8.8:853' ? '#e63946' : 'transparent' }}>Standard</div>
+              <div onClick={() => updateUpstreamDNS('94.140.14.14:853,1.1.1.3:853')} style={{ flex: 1, padding: '8px', textAlign: 'center', borderRight: '1px solid #2a2a2a', cursor: 'pointer', backgroundColor: config?.upstream_dns === '94.140.14.14:853,1.1.1.3:853' ? '#e63946' : 'transparent' }}>Family</div>
+              <div onClick={() => updateUpstreamDNS('9.9.9.9:853,94.140.14.14:853')} style={{ flex: 1, padding: '8px', textAlign: 'center', cursor: 'pointer', backgroundColor: config?.upstream_dns === '9.9.9.9:853,94.140.14.14:853' ? '#e63946' : 'transparent' }}>Strict</div>
             </div>
 
             <p style={{ fontSize: '0.8rem', color: '#888', marginBottom: '1.5rem' }}>Balanced protection for daily browsing.</p>
@@ -314,7 +480,11 @@ export default function App() {
                 <p>Blocks adult and explicit domains.</p>
               </div>
               <label className="switch">
-                <input type="checkbox" />
+                <input 
+                  type="checkbox" 
+                  checked={config?.blocklists?.includes('https://nsfw.oisd.nl/') || false}
+                  onChange={() => toggleList('https://nsfw.oisd.nl/')}
+                />
                 <span className="slider"></span>
               </label>
             </div>
@@ -324,7 +494,11 @@ export default function App() {
                 <p>Blocks betting, casinos, and gambling domains.</p>
               </div>
               <label className="switch">
-                <input type="checkbox" />
+                <input 
+                  type="checkbox" 
+                  checked={config?.blocklists?.includes('https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/gambling.txt') || false}
+                  onChange={() => toggleList('https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/gambling.txt')}
+                />
                 <span className="slider"></span>
               </label>
             </div>
@@ -334,7 +508,11 @@ export default function App() {
                 <p>Blocks major social-network domains.</p>
               </div>
               <label className="switch">
-                <input type="checkbox" />
+                <input 
+                  type="checkbox" 
+                  checked={config?.blocklists?.includes('https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/social.txt') || false}
+                  onChange={() => toggleList('https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/social.txt')}
+                />
                 <span className="slider"></span>
               </label>
             </div>
@@ -359,6 +537,115 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {selectedDomain && (
+        <div className="modal-overlay" onClick={() => setSelectedDomain(null)}>
+          <div className="modal-content" style={{maxWidth: '600px'}} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontWeight: 700, fontSize: '1.2rem' }}>
+                <div style={{width: 32, height: 32, borderRadius: '50%', backgroundColor: '#e63946', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1rem'}}>
+                  B
+                </div>
+                {selectedDomain}
+              </div>
+              <button className="close-btn" onClick={() => setSelectedDomain(null)}>X</button>
+            </div>
+            
+            <div className="modal-body" style={{padding: '20px'}}>
+              {/* Tags */}
+              <div style={{display: 'flex', gap: '8px', marginBottom: '20px'}}>
+                <span style={{fontSize: '0.7rem', color: '#888', border: '1px dashed #2a2a2a', padding: '4px 8px', borderRadius: '4px'}}>MY DEVICE</span>
+                <span style={{fontSize: '0.7rem', color: '#888', border: '1px dashed #2a2a2a', padding: '4px 8px', borderRadius: '4px'}}>127.0.0.1</span>
+              </div>
+
+              {/* Stats Grid */}
+              <div style={{display: 'flex', gap: '10px', marginBottom: '20px'}}>
+                <div style={{flex: 1, backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', textAlign: 'center'}}>
+                  <h2 style={{margin: '0 0 10px 0'}}>{domainStats ? domainStats.queries : '...'}</h2>
+                  <span style={{fontSize: '0.7rem', color: '#888'}}>QUERIES</span>
+                </div>
+                <div style={{flex: 1, backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', textAlign: 'center', borderBottom: '2px solid #e63946'}}>
+                  <h2 style={{margin: '0 0 10px 0'}}>{domainStats ? domainStats.blocked : '...'}</h2>
+                  <span style={{fontSize: '0.7rem', color: '#888'}}>BLOCKED</span>
+                </div>
+                <div style={{flex: 1, backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', textAlign: 'center'}}>
+                  <h2 style={{margin: '0 0 10px 0'}}>{domainStats ? domainStats.block_rate.toFixed(1) : '...'}%</h2>
+                  <span style={{fontSize: '0.7rem', color: '#888'}}>BLOCK RATE</span>
+                </div>
+              </div>
+
+              {/* Domain Map */}
+              <div style={{backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', marginBottom: '20px', height: '200px', display: 'flex', flexDirection: 'column'}}>
+                <span style={{fontSize: '0.8rem', color: '#888', marginBottom: 'auto'}}>DOMAIN MAP</span>
+                <div style={{display: 'flex', justifyContent: 'center', alignItems: 'center', flex: 1, position: 'relative'}}>
+                  <svg width="100%" height="100%" style={{position: 'absolute', top: 0, left: 0}}>
+                    <line x1="50%" y1="30" x2="50%" y2="100" stroke={domainStats?.is_blocked ? "#e63946" : "#2ecc71"} strokeWidth="2" />
+                  </svg>
+                  <div style={{position: 'absolute', top: 10, display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+                    <div style={{width: 40, height: 40, borderRadius: '50%', border: '1px solid #888', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#151515', zIndex: 2}}>
+                      <Shield size={20} color="#888"/>
+                    </div>
+                    <span style={{fontSize: '0.7rem', color: '#888', marginTop: 4, zIndex: 2, padding: '2px 6px', backgroundColor: '#0d0d0d', borderRadius: '4px'}}>My Device</span>
+                  </div>
+                  <div style={{position: 'absolute', top: 100, display: 'flex', flexDirection: 'column', alignItems: 'center'}}>
+                    <div style={{width: 40, height: 40, borderRadius: '50%', backgroundColor: '#fff', border: `2px solid ${domainStats?.is_blocked ? '#e63946' : '#2ecc71'}`, display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 2}}>
+                      <b style={{color: domainStats?.is_blocked ? '#e63946' : '#2ecc71'}}>{domainStats?.is_blocked ? 'B' : 'A'}</b>
+                    </div>
+                    <span style={{fontSize: '0.7rem', color: '#fff', marginTop: 4, zIndex: 2, padding: '2px 6px', backgroundColor: '#0d0d0d', borderRadius: '4px'}}>{selectedDomain.replace(/\.$/, '')}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Chart */}
+              <div style={{backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', marginBottom: '20px'}}>
+                <span style={{fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '10px'}}>LAST {timeframe > 72 ? `${timeframe/24} DAYS` : `${timeframe} HOURS`}</span>
+                <div style={{ width: '100%', height: 150 }}>
+                  <ResponsiveContainer>
+                    <AreaChart data={domainChartData}>
+                      <XAxis dataKey="time" stroke="#888888" fontSize={10} tickLine={false} axisLine={false} />
+                      <Tooltip contentStyle={{backgroundColor: '#151515', borderColor: '#2a2a2a'}} />
+                      <Area type="monotone" dataKey="blocked" stroke="#e63946" fillOpacity={0.1} fill="#e63946" />
+                      <Area type="monotone" dataKey="queries" stroke="#888888" fillOpacity={0} />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Attribution */}
+              {domainStats?.is_blocked && (
+                <div style={{backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px', marginBottom: '20px'}}>
+                  <h3 style={{marginTop: 0, color: '#e63946', textTransform: 'uppercase'}}>{selectedDomain} IS BLOCKED</h3>
+                  <p style={{fontSize: '0.8rem', color: '#888'}}>
+                    Recent query history attributed blocked requests to this blocklist. This is a live config check.
+                  </p>
+                  <span style={{fontSize: '0.75rem', border: '1px dashed #2a2a2a', padding: '4px 8px', borderRadius: '4px', color: '#e0e0e0', display: 'inline-block'}}>
+                    {domainStats.list_id > 0 && domainStats.list_id <= knownLists.length 
+                      ? knownLists[domainStats.list_id - 1].name.toUpperCase() 
+                      : (domainStats.list_id > knownLists.length ? "CUSTOM RULE" : "UNKNOWN")}
+                  </span>
+                </div>
+              )}
+
+              {/* Quick Actions */}
+              <div style={{backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', padding: '15px', borderRadius: '4px'}}>
+                <span style={{fontSize: '0.8rem', color: '#888', display: 'block', marginBottom: '10px'}}>QUICK ACTIONS</span>
+                <div style={{display: 'flex', gap: '10px'}}>
+                  <button className="btn" style={{flex: 1, backgroundColor: '#e63946', color: 'white', border: 'none'}} onClick={() => addCustomRule(selectedDomain, true)}>
+                    <ShieldAlert size={16} style={{marginRight: 8, verticalAlign: 'middle'}}/> BLOCK
+                  </button>
+                  <button className="btn" style={{flex: 1}} onClick={() => addCustomRule(selectedDomain, false)}>
+                    ALLOW
+                  </button>
+                </div>
+                <p style={{fontSize: '0.7rem', color: '#888', marginTop: '10px', marginBottom: 0}}>
+                  Rules apply to the domain and all its subdomains. Changes apply immediately on the next DNS lookup.
+                </p>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
 
       {showAdvanced && (
         <div className="modal-overlay" onClick={() => setShowAdvanced(false)}>
@@ -412,9 +699,27 @@ export default function App() {
             </div>
             <div className="modal-body">
               <div style={{ display: 'flex', marginBottom: '1rem' }}>
-                <input type="text" placeholder="Add domain... e.g. ||example.com^" style={{ flex: 1, padding: '12px', backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', color: 'white', borderTopLeftRadius: '4px', borderBottomLeftRadius: '4px', outline: 'none' }} />
-                <button className="btn" style={{ borderLeft: 'none', borderRadius: '0', backgroundColor: '#2a2a2a' }}>BLOCK</button>
-                <button className="btn" style={{ borderTopLeftRadius: '0', borderBottomLeftRadius: '0' }}>ALLOW</button>
+                <input 
+                  type="text" 
+                  value={customRuleInput}
+                  onChange={(e) => setCustomRuleInput(e.target.value)}
+                  placeholder="Add domain... e.g. ||example.com^ or just example.com" 
+                  style={{ flex: 1, padding: '12px', backgroundColor: '#0d0d0d', border: '1px solid #2a2a2a', color: 'white', borderTopLeftRadius: '4px', borderBottomLeftRadius: '4px', outline: 'none' }} 
+                />
+                <button 
+                  className="btn" 
+                  onClick={() => { addCustomRule(customRuleInput, true); setCustomRuleInput(''); }}
+                  style={{ borderLeft: 'none', borderRadius: '0', backgroundColor: '#2a2a2a' }}
+                >
+                  BLOCK
+                </button>
+                <button 
+                  className="btn" 
+                  onClick={() => { addCustomRule(customRuleInput, false); setCustomRuleInput(''); }}
+                  style={{ borderTopLeftRadius: '0', borderBottomLeftRadius: '0' }}
+                >
+                  ALLOW
+                </button>
               </div>
 
               <div style={{ border: '1px dashed #2a2a2a', padding: '2rem', textAlign: 'center', color: '#888', borderRadius: '4px', marginBottom: '1rem' }}>

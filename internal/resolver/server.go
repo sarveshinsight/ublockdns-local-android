@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,10 +31,16 @@ type Server struct {
 	history      map[int64]*HourlyStat
 }
 
+type DomainStat struct {
+	Queries int `json:"queries"`
+	Blocked int `json:"blocked"`
+}
+
 type HourlyStat struct {
-	Timestamp int64 `json:"timestamp"`
-	Queries   int   `json:"queries"`
-	Blocked   int   `json:"blocked"`
+	Timestamp int64                  `json:"timestamp"`
+	Queries   int                    `json:"queries"`
+	Blocked   int                    `json:"blocked"`
+	Domains   map[string]*DomainStat `json:"domains"`
 }
 
 type LogEntry struct {
@@ -42,6 +49,8 @@ type LogEntry struct {
 	Action string `json:"action"`
 	Speed  string `json:"speed"`
 	Seen   string `json:"seen"`
+	Rule   string `json:"rule,omitempty"`
+	ListID int    `json:"list_id,omitempty"`
 }
 
 func NewServer(addr string, upstream string, engine *filtering.Engine) *Server {
@@ -93,6 +102,12 @@ func (s *Server) ReloadConfig(cfg *config.Config) error {
 	s.upstream = cfg.UpstreamDNS
 	s.engine = newEngine
 	return nil
+}
+
+func (s *Server) SetUpstream(up string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.upstream = up
 }
 
 func (s *Server) GetRecentQueries() []LogEntry {
@@ -149,6 +164,55 @@ func (s *Server) GetStats() map[string]interface{} {
 	}
 }
 
+func (s *Server) GetDomainStats(domain string) map[string]interface{} {
+	s.mu.RLock()
+	eng := s.engine
+	totalQ := s.topQueried[domain]
+	totalB := s.topBlocked[domain]
+	s.mu.RUnlock()
+	
+	isBlocked := false
+	ruleTxt := ""
+	listID := 0
+	if eng != nil {
+		isBlocked, ruleTxt, listID = eng.Check(domain, dns.TypeA)
+	}
+
+	blockRate := 0.0
+	if totalQ > 0 {
+		blockRate = float64(totalB) / float64(totalQ) * 100
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	histArr := make([]map[string]interface{}, 0)
+	for _, h := range s.history {
+		q := 0
+		b := 0
+		if dstat, ok := h.Domains[domain]; ok {
+			q = dstat.Queries
+			b = dstat.Blocked
+		}
+		histArr = append(histArr, map[string]interface{}{
+			"timestamp": h.Timestamp,
+			"queries":   q,
+			"blocked":   b,
+		})
+	}
+	sort.Slice(histArr, func(i, j int) bool { return histArr[i]["timestamp"].(int64) < histArr[j]["timestamp"].(int64) })
+
+	return map[string]interface{}{
+		"domain":     domain,
+		"queries":    totalQ,
+		"blocked":    totalB,
+		"block_rate": blockRate,
+		"history":    histArr,
+		"is_blocked": isBlocked,
+		"rule":       ruleTxt,
+		"list_id":    listID,
+	}
+}
+
 func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 	start := time.Now()
 	
@@ -187,8 +251,10 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 	}
 
 	isBlocked := false
+	ruleTxt := ""
+	listID := 0
 	if eng != nil {
-		isBlocked = eng.Check(q.Name, q.Qtype)
+		isBlocked, ruleTxt, listID = eng.Check(q.Name, q.Qtype)
 	}
 
 	if isBlocked {
@@ -197,17 +263,19 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 		s.topBlocked[q.Name]++
 		s.mu.Unlock()
 		logEntry.Action = "BLOCKED"
+		logEntry.Rule = ruleTxt
+		logEntry.ListID = listID
 	}
 
 	if isBlocked {
 		switch q.Qtype {
 		case dns.TypeA:
-			rr, _ := dns.NewRR(q.Name + " 300 IN A 0.0.0.0")
+			rr, _ := dns.NewRR(q.Name + " 10 IN A 0.0.0.0")
 			if rr != nil {
 				m.Answer = append(m.Answer, rr)
 			}
 		case dns.TypeAAAA:
-			rr, _ := dns.NewRR(q.Name + " 300 IN AAAA ::")
+			rr, _ := dns.NewRR(q.Name + " 10 IN AAAA ::")
 			if rr != nil {
 				m.Answer = append(m.Answer, rr)
 			}
@@ -221,11 +289,62 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 		return
 	}
 
-	// up is already captured above
+	// Handle multi-upstream routing concurrently for fastest response
+	upstreams := strings.Split(up, ",")
+	
+	type result struct {
+		resp *dns.Msg
+		err  error
+	}
+	
+	// Filter valid upstreams
+	var validUpstreams []string
+	for _, u := range upstreams {
+		u = strings.TrimSpace(u)
+		if u != "" {
+			validUpstreams = append(validUpstreams, u)
+		}
+	}
+	
+	if len(validUpstreams) == 0 {
+		validUpstreams = []string{"1.1.1.1:53"} // Fallback
+	}
 
-	resp, _, err := s.client.Exchange(r, up)
-	if err != nil {
-		log.Printf("Upstream error for %s: %v", q.Name, err)
+	log.Printf("Routing %s to upstreams: %v", q.Name, validUpstreams)
+
+	resc := make(chan result, len(validUpstreams))
+	
+	for _, u := range validUpstreams {
+		go func(addr string) {
+			netType := "udp4"
+			if strings.HasSuffix(addr, ":853") {
+				netType = "tcp-tls"
+			}
+			
+			client := &dns.Client{
+				Net:     netType,
+				Timeout: 5 * time.Second,
+			}
+			
+			res, _, err := client.Exchange(r.Copy(), addr)
+			resc <- result{res, err}
+		}(u)
+	}
+
+	var resp *dns.Msg
+	var err error
+	
+	for i := 0; i < len(validUpstreams); i++ {
+		res := <-resc
+		if res.err == nil && res.resp != nil {
+			resp = res.resp
+			err = nil
+			break // Fastest successful response wins
+		}
+		err = res.err
+	}
+
+	if err != nil || resp == nil {
 		m.Rcode = dns.RcodeServerFailure
 		
 		logEntry.Speed = time.Since(start).String()
@@ -243,17 +362,36 @@ func (s *Server) addLog(l LogEntry) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.recentLogs = append([]LogEntry{l}, s.recentLogs...)
-	if len(s.recentLogs) > 100 {
-		s.recentLogs = s.recentLogs[:100]
+	if len(s.recentLogs) > 5000 {
+		s.recentLogs = s.recentLogs[:5000]
 	}
 
-	hour := time.Now().Truncate(time.Hour).Unix()
-	if s.history[hour] == nil {
-		s.history[hour] = &HourlyStat{Timestamp: hour}
+	// Bucket by 5-minute intervals
+	bucket := time.Now().Truncate(5 * time.Minute).Unix()
+	if s.history[bucket] == nil {
+		s.history[bucket] = &HourlyStat{Timestamp: bucket, Domains: make(map[string]*DomainStat)}
 	}
-	s.history[hour].Queries++
+	s.history[bucket].Queries++
+	
+	if s.history[bucket].Domains == nil {
+		s.history[bucket].Domains = make(map[string]*DomainStat)
+	}
+	if s.history[bucket].Domains[l.Domain] == nil {
+		s.history[bucket].Domains[l.Domain] = &DomainStat{}
+	}
+	s.history[bucket].Domains[l.Domain].Queries++
+
 	if l.Action == "BLOCKED" {
-		s.history[hour].Blocked++
+		s.history[bucket].Blocked++
+		s.history[bucket].Domains[l.Domain].Blocked++
+	}
+	
+	// Aggressive cleanup: keep only last 30 days (30 * 24 * 12 = 8640 buckets)
+	cutoff := bucket - (30 * 24 * 3600)
+	for ts := range s.history {
+		if ts < cutoff {
+			delete(s.history, ts)
+		}
 	}
 }
 
