@@ -1,7 +1,6 @@
 package resolver
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -86,11 +85,15 @@ func (s *Server) ListenAndServe() error {
 
 func (s *Server) ReloadConfig(cfg *config.Config) error {
 	log.Printf("ReloadConfig starting with %d blocklists and %d custom rules", len(cfg.Blocklists), len(cfg.CustomRules))
-	ctx := context.Background()
 	dataDir := "./data"
-	paths, err := filtering.DownloadLists(ctx, dataDir, cfg.Blocklists)
+	var allURLs []string
+	for _, l := range config.Catalog {
+		allURLs = append(allURLs, l.URL)
+	}
+
+	paths, err := filtering.RouteActiveLists(dataDir, cfg.Blocklists, allURLs)
 	if err != nil {
-		log.Printf("ReloadConfig DownloadLists error: %v", err)
+		log.Printf("ReloadConfig RouteActiveLists error: %v", err)
 		return err
 	}
 

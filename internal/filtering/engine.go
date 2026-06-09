@@ -1,16 +1,13 @@
 package filtering
 
 import (
-	"context"
 	"crypto/md5"
 	"fmt"
 	"io"
 	"log"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/AdguardTeam/urlfilter"
 	"github.com/AdguardTeam/urlfilter/filterlist"
@@ -21,52 +18,86 @@ type Engine struct {
 	dnsEngine *urlfilter.DNSEngine
 }
 
-// DownloadLists downloads the given URLs to a local data directory, caching them for 24 hours.
-func DownloadLists(ctx context.Context, dataDir string, urls []string) ([]string, error) {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, err
+// RouteActiveLists copies active lists from the master directory to the active directory,
+// and copies disabled lists from master to disabled. It returns the paths to the active lists.
+func RouteActiveLists(dataDir string, activeURLs []string, allURLs []string) ([]string, error) {
+	masterDir := filepath.Join(dataDir, "master")
+	activeDir := filepath.Join(dataDir, "active")
+	disabledDir := filepath.Join(dataDir, "disabled")
+
+	// Ensure directories exist
+	os.MkdirAll(activeDir, 0755)
+	os.MkdirAll(disabledDir, 0755)
+
+	// Clean active and disabled directories before routing
+	cleanDir(activeDir)
+	cleanDir(disabledDir)
+
+	activeMap := make(map[string]bool)
+	for _, u := range activeURLs {
+		activeMap[u] = true
 	}
 
-	var paths []string
-	for i, u := range urls {
+	var activePaths []string
+
+	for _, u := range allURLs {
 		hash := fmt.Sprintf("%x", md5.Sum([]byte(u)))
-		filename := filepath.Join(dataDir, fmt.Sprintf("list_%s.txt", hash))
+		masterPath := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash))
 		
-		info, err := os.Stat(filename)
-		if err == nil && info.Size() > 0 && time.Since(info.ModTime()) < 24*time.Hour {
-			paths = append(paths, filename)
+		// If the master list doesn't exist yet (e.g. background updater hasn't downloaded it), skip
+		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			continue
 		}
 
-		log.Printf("Downloading blocklist %d: %s", i+1, u)
-		req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
-		if err != nil {
-			log.Printf("Failed to create request for %s: %v", u, err)
-			continue
+		if activeMap[u] {
+			activePath := filepath.Join(activeDir, fmt.Sprintf("list_%s.txt", hash))
+			copyFile(masterPath, activePath)
+			activePaths = append(activePaths, activePath)
+		} else {
+			disabledPath := filepath.Join(disabledDir, fmt.Sprintf("list_%s.txt", hash))
+			copyFile(masterPath, disabledPath)
 		}
-
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			log.Printf("Failed to download %s: %v", u, err)
-			continue
-		}
-
-		f, err := os.Create(filename)
-		if err != nil {
-			resp.Body.Close()
-			return nil, err
-		}
-
-		_, err = io.Copy(f, resp.Body)
-		f.Close()
-		resp.Body.Close()
-		if err != nil {
-			log.Printf("Failed to save %s: %v", u, err)
-			continue
-		}
-		paths = append(paths, filename)
 	}
-	return paths, nil
+
+	return activePaths, nil
+}
+
+func cleanDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	defer d.Close()
+	names, err := d.Readdirnames(-1)
+	if err != nil {
+		return
+	}
+	for _, name := range names {
+		os.RemoveAll(filepath.Join(dir, name))
+	}
+}
+
+func copyFile(src, dst string) error {
+	// Fast copy using Hardlink if possible, fallback to standard copy
+	err := os.Link(src, dst)
+	if err == nil {
+		return nil
+	}
+	
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	
+	destination, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+	
+	_, err = io.Copy(destination, source)
+	return err
 }
 
 func NewEngine(listPaths []string, customRules []string) (*Engine, error) {

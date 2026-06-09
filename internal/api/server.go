@@ -53,6 +53,7 @@ func (s *Server) Start() error {
 		r.Get("/logs", s.handleGetLogs)
 		r.Get("/stats", s.handleGetStats)
 		r.Get("/domain/{domain}", s.handleGetDomain)
+		r.Get("/catalog", s.handleGetCatalog)
 	})
 
 	// Serve the static frontend
@@ -123,4 +124,9 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	stats := s.dnsResolver.GetDomainStats(domain)
 	json.NewEncoder(w).Encode(stats)
+}
+
+func (s *Server) handleGetCatalog(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(config.Catalog)
 }

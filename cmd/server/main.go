@@ -1,13 +1,14 @@
 package main
 
 import (
+	"context"
 	"log"
 	"os"
-	"time"
 
 	"github.com/ugzv/ublockdnsclient/internal/api"
 	"github.com/ugzv/ublockdnsclient/internal/config"
 	"github.com/ugzv/ublockdnsclient/internal/resolver"
+	"github.com/ugzv/ublockdnsclient/internal/updater"
 )
 
 func main() {
@@ -45,20 +46,16 @@ func main() {
 		}
 	}()
 
-	// 24-Hour automatic blocklist updater
-	go func() {
-		importTime := time.NewTicker(24 * time.Hour)
-		defer importTime.Stop()
-		for range importTime.C {
-			log.Println("Running automatic 24-hour blocklist update...")
-			// Reloading config will re-download the remote blocklists
-			if err := server.ReloadConfig(cfg); err != nil {
-				log.Printf("Failed to automatically update blocklists: %v", err)
-			} else {
-				log.Println("Successfully updated all blocklists!")
-			}
+	// Start the Master Updater service
+	dataDir := "./data"
+	updaterSvc := updater.NewUpdater(dataDir, func() {
+		if err := server.ReloadConfig(cfg); err != nil {
+			log.Printf("Failed to reload config after master sync: %v", err)
+		} else {
+			log.Println("Successfully reloaded config after master sync")
 		}
-	}()
+	})
+	go updaterSvc.Start(context.Background())
 
 	// Start API server
 	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath)

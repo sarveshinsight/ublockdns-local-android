@@ -16,6 +16,7 @@ export default function App() {
   const [selectedDomain, setSelectedDomain] = useState(null)
   const [domainStats, setDomainStats] = useState(null)
   const [timeframe, setTimeframe] = useState(24) // hours
+  const [knownLists, setKnownLists] = useState([])
 
   const fetchData = async () => {
     try {
@@ -35,6 +36,14 @@ export default function App() {
           cfgData.blocklists = cfgData.blocklists || []
           cfgData.custom_rules = cfgData.custom_rules || []
           setConfig(cfgData)
+        }
+      }
+
+      if (knownLists.length === 0) {
+        const catRes = await fetch('/api/catalog')
+        if (catRes.ok) {
+          const catData = await catRes.json()
+          setKnownLists(catData || [])
         }
       }
     } catch (err) {
@@ -235,19 +244,7 @@ export default function App() {
     }).then(() => fetchData())
   }
 
-  const knownLists = [
-    { name: "HaGeZi Multi NORMAL", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/normal.txt", desc: "Balanced DNS-native ads and tracker blocking" },
-    { name: "HaGeZi Multi PRO", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/pro.txt", desc: "Stricter DNS-native blocking" },
-    { name: "HaGeZi Threat Intelligence Feed", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/tif.txt", desc: "DNS-native malware, phishing, scam" },
-    { name: "HaGeZi Phishing URL Blocklist", url: "https://raw.githubusercontent.com/hagezi/dns-blocklists/main/adblock/phishing.txt", desc: "Blocks known phishing and scam websites" },
-    { name: "OISD Big", url: "https://big.oisd.nl/", desc: "Broad DNS-native blocklist" },
-    { name: "OISD Small", url: "https://small.oisd.nl/", desc: "Lightweight blocklist for low-powered devices" },
-    { name: "OISD NSFW", url: "https://nsfw.oisd.nl/", desc: "Blocks adult content and NSFW domains" },
-    { name: "Steven Black's Unified Hosts", url: "https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts", desc: "Comprehensive malware and adware domain blocklist" },
-    { name: "Peter Lowe's Ad & Tracking List", url: "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=hosts&showintro=0&mimetype=plaintext", desc: "Blocks ad and tracking servers" },
-    { name: "AdGuard DNS Filter", url: "https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt", desc: "AdGuard's specific filter for DNS-level blocking" },
-    { name: "Dan Pollock's hosts file", url: "https://someonewhocares.org/hosts/hosts", desc: "Blocks ads, trackers, and shocking sites" }
-  ]
+  // knownLists is now fetched from the backend catalog
 
   return (
     <>
