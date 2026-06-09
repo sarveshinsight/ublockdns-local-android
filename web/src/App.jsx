@@ -258,6 +258,35 @@ export default function App() {
     })
   }
 
+  const toggleCustomRuleState = async (ruleStr) => {
+    if (!config) return
+    let newRule
+    if (ruleStr.startsWith('! ')) {
+      newRule = ruleStr.substring(2)
+    } else {
+      newRule = '! ' + ruleStr
+    }
+    const newRules = (config.custom_rules || []).map(r => r === ruleStr ? newRule : r)
+    const newConfig = { ...config, custom_rules: newRules }
+    setConfig(newConfig)
+    
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).then(() => {
+      fetchData()
+    })
+  }
+
+  const parseRuleForDisplay = (ruleStr) => {
+    const isEnabled = !ruleStr.startsWith('! ')
+    const text = ruleStr.replace(/^!\s*/, '')
+    const isAllowed = text.startsWith('@@')
+    const cleanDomain = text.replace(/^(?:@@)?\|\|(.*?)\^?$/, '$1')
+    return { domain: cleanDomain, isAllowed, isEnabled, raw: ruleStr }
+  }
+
   const updateUpstreamDNS = async (value) => {
     if (!config) return
     const newConfig = { ...config, upstream_dns: value }
@@ -747,14 +776,39 @@ export default function App() {
               <div style={{ border: '1px dashed #2a2a2a', padding: '2rem', textAlign: 'center', color: '#888', borderRadius: '4px', marginBottom: '1rem' }}>
                 {config?.custom_rules?.length > 0 ? (
                   <ul style={{ listStyle: 'none', padding: 0, margin: 0, textAlign: 'left' }}>
-                    {config.custom_rules.map((rule, i) => (
-                      <li key={i} style={{ padding: '8px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>{rule}</span>
-                        <button onClick={() => removeCustomRule(rule)} style={{background: 'none', border: 'none', color: '#e63946', cursor: 'pointer', padding: '4px'}}>
-                          <X size={16} />
-                        </button>
-                      </li>
-                    ))}
+                    {config.custom_rules.map((ruleStr, i) => {
+                      const { domain, isAllowed, isEnabled, raw } = parseRuleForDisplay(ruleStr)
+                      return (
+                        <li key={i} style={{ padding: '12px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', opacity: isEnabled ? 1 : 0.5 }}>
+                            <span style={{
+                              padding: '2px 6px',
+                              borderRadius: '4px',
+                              fontSize: '0.7rem',
+                              fontWeight: 'bold',
+                              backgroundColor: isAllowed ? 'rgba(76, 175, 80, 0.2)' : 'rgba(230, 57, 70, 0.2)',
+                              color: isAllowed ? '#4caf50' : '#e63946'
+                            }}>
+                              {isAllowed ? 'ALLOW' : 'BLOCK'}
+                            </span>
+                            <span style={{ fontFamily: 'monospace', fontSize: '0.9rem', textDecoration: isEnabled ? 'none' : 'line-through' }}>{domain}</span>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            <label className="switch" style={{ transform: 'scale(0.8)', margin: 0 }}>
+                              <input 
+                                type="checkbox" 
+                                checked={isEnabled}
+                                onChange={() => toggleCustomRuleState(raw)}
+                              />
+                              <span className="slider round"></span>
+                            </label>
+                            <button onClick={() => removeCustomRule(raw)} style={{background: 'none', border: 'none', color: '#888', cursor: 'pointer', padding: '4px'}} title="Delete Rule">
+                              <X size={18} />
+                            </button>
+                          </div>
+                        </li>
+                      )
+                    })}
                   </ul>
                 ) : "No custom rules yet"}
               </div>
