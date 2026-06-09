@@ -85,15 +85,18 @@ func (s *Server) ListenAndServe() error {
 }
 
 func (s *Server) ReloadConfig(cfg *config.Config) error {
+	log.Printf("ReloadConfig starting with %d blocklists and %d custom rules", len(cfg.Blocklists), len(cfg.CustomRules))
 	ctx := context.Background()
 	dataDir := "./data"
 	paths, err := filtering.DownloadLists(ctx, dataDir, cfg.Blocklists)
 	if err != nil {
+		log.Printf("ReloadConfig DownloadLists error: %v", err)
 		return err
 	}
 
 	newEngine, err := filtering.NewEngine(paths, cfg.CustomRules)
 	if err != nil {
+		log.Printf("ReloadConfig NewEngine error: %v", err)
 		return err
 	}
 
@@ -101,6 +104,7 @@ func (s *Server) ReloadConfig(cfg *config.Config) error {
 	defer s.mu.Unlock()
 	s.upstream = cfg.UpstreamDNS
 	s.engine = newEngine
+	log.Printf("ReloadConfig SUCCESS")
 	return nil
 }
 
