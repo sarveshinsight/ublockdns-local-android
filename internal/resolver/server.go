@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"os"
+	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -107,7 +108,11 @@ func (s *Server) ReloadConfig(cfg *config.Config) error {
 	defer s.mu.Unlock()
 	s.upstream = cfg.UpstreamDNS
 	s.engine = newEngine
-	log.Printf("ReloadConfig SUCCESS")
+	
+	// Automatically flush Windows DNS cache so browser respects the new list immediately
+	go exec.Command("ipconfig", "/flushdns").Run()
+	
+	log.Printf("ReloadConfig SUCCESS (and DNS cache flushed)")
 	return nil
 }
 
