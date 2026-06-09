@@ -4,6 +4,8 @@ import (
 	"context"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/ugzv/ublockdnsclient/internal/api"
 	"github.com/ugzv/ublockdnsclient/internal/config"
@@ -57,9 +59,20 @@ func main() {
 	})
 	go updaterSvc.Start(context.Background())
 
-	// Start API server
+	// Start API server in background
 	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath)
-	if err := apiServer.Start(); err != nil {
-		log.Fatalf("API server failed: %v", err)
-	}
+	go func() {
+		if err := apiServer.Start(); err != nil {
+			log.Fatalf("API server failed: %v", err)
+		}
+	}()
+
+	// Wait for interrupt signal to gracefully shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, os.Interrupt, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down server...")
+	server.Save()
+	log.Println("Logs and history saved. Goodbye!")
 }

@@ -67,6 +67,7 @@ func NewServer(addr string, upstream string, engine *filtering.Engine) *Server {
 		},
 	}
 	s.loadHistory()
+	s.loadLogs()
 	go s.historySaver()
 	return s
 }
@@ -426,10 +427,35 @@ func (s *Server) saveHistory() {
 	}
 }
 
+func (s *Server) loadLogs() {
+	b, err := os.ReadFile("logs.json")
+	if err == nil {
+		var l []LogEntry
+		if err := json.Unmarshal(b, &l); err == nil {
+			s.recentLogs = l
+		}
+	}
+}
+
+func (s *Server) saveLogs() {
+	s.mu.RLock()
+	b, err := json.Marshal(s.recentLogs)
+	s.mu.RUnlock()
+	if err == nil {
+		os.WriteFile("logs.json", b, 0644)
+	}
+}
+
 func (s *Server) historySaver() {
 	ticker := time.NewTicker(1 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		s.saveHistory()
+		s.saveLogs()
 	}
+}
+
+func (s *Server) Save() {
+	s.saveHistory()
+	s.saveLogs()
 }

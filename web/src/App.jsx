@@ -3,6 +3,27 @@ import { Shield, ShieldAlert, Settings, LogOut, DownloadCloud, X } from 'lucide-
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import './index.css'
 
+const domainColors = ['#e63946', '#2ecc71', '#3498db', '#f39c12', '#9b59b6', '#1abc9c', '#d35400', '#34495e'];
+const getDomainColor = (domain) => {
+  if (!domain) return domainColors[0];
+  let hash = 0;
+  for (let i = 0; i < domain.length; i++) hash = domain.charCodeAt(i) + ((hash << 5) - hash);
+  return domainColors[Math.abs(hash) % domainColors.length];
+};
+
+const DomainIcon = ({ domain }) => {
+  const [error, setError] = useState(false);
+  return (
+    <div className="domain-icon" style={{ backgroundColor: error ? getDomainColor(domain) : 'transparent' }}>
+      {!error ? (
+        <img src={`https://icons.duckduckgo.com/ip3/${domain}.ico`} onError={() => setError(true)} alt="" />
+      ) : (
+        domain ? domain.charAt(0).toUpperCase() : '?'
+      )}
+    </div>
+  );
+};
+
 export default function App() {
   const [stats, setStats] = useState({ total_queries: 0, blocked: 0, block_rate: 0, top_queried: [], top_blocked: [], history: [] })
   const [logs, setLogs] = useState([])
@@ -372,27 +393,33 @@ export default function App() {
           </div>
 
           <div style={{ display: 'flex', gap: '20px', marginBottom: '20px' }}>
-            <div className="card" style={{ flex: 1 }}>
-              <div className="card-header">Top Queried Domains</div>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
-                {(stats.top_queried || []).length === 0 && <li style={{color: '#888'}}>No queries yet</li>}
-                {(stats.top_queried || []).map((item, i) => (
-                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0', cursor: 'pointer' }} onClick={() => openDomainModal(item.domain)}>
-                    <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
-                    <span style={{color: '#888'}}>{item.count}</span>
+            <div className="domain-card">
+              <div className="domain-list-header">TOP BLOCKED DOMAINS</div>
+              <ul className="domain-list">
+                {(stats.top_blocked || []).length === 0 && <li style={{color: '#888'}}>No blocked queries yet</li>}
+                {(stats.top_blocked || []).map((item, i) => (
+                  <li key={i} className="domain-list-item" onClick={() => openDomainModal(item.domain)}>
+                    <span className="domain-rank">{i + 1}</span>
+                    <DomainIcon domain={item.domain} />
+                    <span className="domain-name" title={item.domain}>{item.domain}</span>
+                    <span className="domain-count-blocked">{item.count}</span>
+                    <span className="domain-chevron">&gt;</span>
                   </li>
                 ))}
               </ul>
             </div>
             
-            <div className="card" style={{ flex: 1 }}>
-              <div className="card-header">Top Blocked Domains</div>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '0.8rem' }}>
-                {(stats.top_blocked || []).length === 0 && <li style={{color: '#888'}}>No blocked queries yet</li>}
-                {(stats.top_blocked || []).map((item, i) => (
-                  <li key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid #2a2a2a', color: '#e63946', cursor: 'pointer' }} onClick={() => openDomainModal(item.domain)}>
-                    <div className="text-truncate" style={{maxWidth: '200px'}} title={item.domain}>{item.domain}</div>
-                    <span style={{color: '#888'}}>{item.count}</span>
+            <div className="domain-card">
+              <div className="domain-list-header">MOST VISITED DOMAINS</div>
+              <ul className="domain-list">
+                {(stats.top_queried || []).length === 0 && <li style={{color: '#888'}}>No queries yet</li>}
+                {(stats.top_queried || []).map((item, i) => (
+                  <li key={i} className="domain-list-item" onClick={() => openDomainModal(item.domain)}>
+                    <span className="domain-rank">{i + 1}</span>
+                    <DomainIcon domain={item.domain} />
+                    <span className="domain-name" title={item.domain}>{item.domain}</span>
+                    <span className="domain-count-visited">{item.count}</span>
+                    <span className="domain-chevron">&gt;</span>
                   </li>
                 ))}
               </ul>

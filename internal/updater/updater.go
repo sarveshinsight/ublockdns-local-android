@@ -24,7 +24,7 @@ func NewUpdater(dataDir string, onSyncComplete func()) *Updater {
 }
 
 func (u *Updater) Start(ctx context.Context) {
-	u.syncMaster()
+	u.SyncMaster()
 
 	ticker := time.NewTicker(24 * time.Hour)
 	for {
@@ -32,12 +32,12 @@ func (u *Updater) Start(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			u.syncMaster()
+			u.SyncMaster()
 		}
 	}
 }
 
-func (u *Updater) syncMaster() {
+func (u *Updater) SyncMaster() {
 	masterDir := filepath.Join(u.dataDir, "master")
 	if err := os.MkdirAll(masterDir, 0755); err != nil {
 		log.Printf("Updater: failed to create master dir: %v", err)
