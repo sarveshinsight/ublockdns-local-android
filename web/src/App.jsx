@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Shield, ShieldAlert, Settings, LogOut, DownloadCloud } from 'lucide-react'
+import { Shield, ShieldAlert, Settings, LogOut, DownloadCloud, X } from 'lucide-react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import './index.css'
 
@@ -198,8 +198,18 @@ export default function App() {
 
   const addCustomRule = async (domain, isBlock) => {
     if (!config) return
-    const cleanDomain = domain.replace(/^(?:\|\||@@\|\|)?(.*?)\^?$/, '$1')
+    let cleanDomain = domain.replace(/^(?:\|\||@@\|\|)?(.*?)\^?$/, '$1').trim()
     if (!cleanDomain) return
+
+    try {
+      if (cleanDomain.startsWith('http://') || cleanDomain.startsWith('https://')) {
+        cleanDomain = new URL(cleanDomain).hostname
+      } else if (cleanDomain.includes('/')) {
+        cleanDomain = cleanDomain.split('/')[0]
+      }
+    } catch (e) {
+      // fallback to whatever was there if parsing fails
+    }
 
     const blockRule = `||${cleanDomain}^`
     const allowRule = `@@||${cleanDomain}^`
@@ -224,6 +234,21 @@ export default function App() {
     }
 
     // Fire and forget
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newConfig)
+    }).then(() => {
+      fetchData()
+    })
+  }
+
+  const removeCustomRule = async (ruleToRemove) => {
+    if (!config) return
+    const newRules = (config.custom_rules || []).filter(r => r !== ruleToRemove)
+    const newConfig = { ...config, custom_rules: newRules }
+    setConfig(newConfig)
+    
     fetch('/api/config', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -723,7 +748,12 @@ export default function App() {
                 {config?.custom_rules?.length > 0 ? (
                   <ul style={{ listStyle: 'none', padding: 0, margin: 0, textAlign: 'left' }}>
                     {config.custom_rules.map((rule, i) => (
-                      <li key={i} style={{ padding: '8px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0' }}>{rule}</li>
+                      <li key={i} style={{ padding: '8px 0', borderBottom: '1px solid #2a2a2a', color: '#e0e0e0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>{rule}</span>
+                        <button onClick={() => removeCustomRule(rule)} style={{background: 'none', border: 'none', color: '#e63946', cursor: 'pointer', padding: '4px'}}>
+                          <X size={16} />
+                        </button>
+                      </li>
                     ))}
                   </ul>
                 ) : "No custom rules yet"}
