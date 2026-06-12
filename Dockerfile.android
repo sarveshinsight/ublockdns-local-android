@@ -60,6 +60,7 @@ WORKDIR /workspace
 CMD ["bash", "-c", "\
     echo 'Building Frontend...' && \
     cd web && npm install && npm run build && cd .. && \
+    mkdir -p internal/api/web_dist && \
     cp -r web/dist/* internal/api/web_dist/ && \
     echo 'Building Gomobile library...' && \
     go get -tool golang.org/x/mobile/cmd/gobind && \
