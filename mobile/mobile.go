@@ -17,11 +17,18 @@ var (
 	GlobalServer  *resolver.Server
 	GlobalUpdater *updater.Updater
 	cancelFunc    context.CancelFunc
+	isRunning     bool
 )
 
 // Start initializes the UblockDNS backend.
 // dataDir should be the Android app's private files directory (e.g., /data/user/0/com.ublockdns.app/files)
 func Start(dataDir string) {
+	if isRunning {
+		log.Println("Mobile: Backend already running")
+		return
+	}
+	isRunning = true
+
 	log.Printf("Mobile: Starting UblockDNS in %s", dataDir)
 
 	cfg, err := config.Load(filepath.Join(dataDir, "config.yaml"))
@@ -77,6 +84,7 @@ func Stop() {
 	if GlobalServer != nil {
 		GlobalServer.Save()
 	}
+	isRunning = false
 	log.Println("Mobile: Backend stopped")
 }
 
