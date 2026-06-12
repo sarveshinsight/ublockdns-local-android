@@ -1,0 +1,86 @@
+name: CI and Android Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "Unformatted files:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Create dummy web_dist
+        run: |
+          mkdir -p internal/api/web_dist
+          touch internal/api/web_dist/index.html
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: go build ./...
+
+      - name: Cross-compile smoke builds
+        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...
+          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build ./...
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
+          GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build ./...
+          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build ./...
+
+  build-and-release:
+    needs: test
+    runs-on: ubuntu-latest
+    
+    # We need contents: write permission to create/update releases
+    permissions:
+      contents: write
+
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Build Android APK via Docker
+        run: |
+          echo "Building Docker image..."
+          docker build -t ublockdns-android-builder -f Dockerfile.android .
+          
+          echo "Running compiler container..."
+          docker run --name ublockdns-android-compiler -v "${PWD}:/workspace" ublockdns-android-builder
+
+      - name: Update Beta Release
+        uses: ncipollo/release-action@v1
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        with:
+          tag: "beta-1"
+          name: "Latest Beta Release"
+          body: "Automated continuous build from the main branch."
+          artifacts: "ublockdns-android.apk"
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
