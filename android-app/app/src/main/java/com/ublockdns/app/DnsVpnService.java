@@ -16,6 +16,7 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     private Thread mThread;
     private ParcelFileDescriptor mInterface;
+    private volatile boolean mStopping = false;
 
     // Static reference so MainActivity can directly call disconnect
     private static DnsVpnService sInstance;
@@ -23,26 +24,35 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        Log.i(TAG, "onStartCommand called");
         sInstance = this;
+        mStopping = false;
         isRunning = true;
 
+        // Kill any existing thread before starting fresh
         if (mThread != null) {
             mThread.interrupt();
+            mThread = null;
         }
+
+        // Close any lingering interface from a previous run
+        closeInterface();
+
         mThread = new Thread(this, "DnsVpnThread");
         mThread.start();
         return START_STICKY;
     }
 
     /**
-     * Called directly from MainActivity.stopVpn() via the static reference.
-     * Tears down the VPN tunnel, stops the thread, and kills the service.
+     * Cleanly tears down the VPN tunnel.
+     * Can be called from any thread.
      */
     public void disconnect() {
         Log.i(TAG, "disconnect() called");
+        mStopping = true;
         isRunning = false;
 
-        // 1. Close the TUN fd — this unblocks the blocking read() in run()
+        // 1. Close the TUN fd — unblocks the blocking read()
         closeInterface();
 
         // 2. Interrupt the worker thread
@@ -51,14 +61,13 @@ public class DnsVpnService extends VpnService implements Runnable {
             mThread = null;
         }
 
-        // 3. Stop the service from within
+        // 3. Stop the service
         stopSelf();
         sInstance = null;
     }
 
     /**
-     * Static helper so MainActivity can trigger disconnect without needing
-     * to send an intent through the Android service machinery.
+     * Static helper — callable from MainActivity without needing an intent.
      */
     public static void requestDisconnect() {
         Log.i(TAG, "requestDisconnect() called, sInstance=" + sInstance);
@@ -72,6 +81,7 @@ public class DnsVpnService extends VpnService implements Runnable {
     public void onDestroy() {
         Log.i(TAG, "onDestroy() called");
         isRunning = false;
+        mStopping = true;
         closeInterface();
         if (mThread != null) {
             mThread.interrupt();
@@ -83,22 +93,27 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     @Override
     public void onRevoke() {
-        // Called by Android when user revokes VPN from system settings
         Log.i(TAG, "onRevoke() called");
         disconnect();
     }
 
     @Override
     public void run() {
+        ParcelFileDescriptor localInterface = null;
         try {
-            configure();
+            localInterface = configure();
+            if (localInterface == null) {
+                Log.e(TAG, "Failed to establish VPN interface");
+                isRunning = false;
+                return;
+            }
 
-            FileInputStream in = new FileInputStream(mInterface.getFileDescriptor());
-            FileOutputStream out = new FileOutputStream(mInterface.getFileDescriptor());
+            FileInputStream in = new FileInputStream(localInterface.getFileDescriptor());
+            FileOutputStream out = new FileOutputStream(localInterface.getFileDescriptor());
 
             byte[] packet = new byte[32767];
 
-            while (!Thread.currentThread().isInterrupted() && mInterface != null) {
+            while (!Thread.currentThread().isInterrupted() && !mStopping) {
                 int length = in.read(packet);
                 if (length > 0) {
                     byte[] requestBytes = new byte[length];
@@ -110,37 +125,49 @@ public class DnsVpnService extends VpnService implements Runnable {
                         out.write(responseBytes);
                     }
                 } else if (length < 0) {
-                    // EOF — fd was closed, exit cleanly
+                    // EOF — fd was closed
                     break;
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "VPN loop ended", e);
+            if (!mStopping) {
+                Log.e(TAG, "VPN loop error", e);
+            }
         } finally {
             closeInterface();
-            isRunning = false;
+            if (!mStopping) {
+                // Unexpected exit — mark as not running
+                isRunning = false;
+            }
         }
     }
 
-    private void configure() {
-        Builder builder = new Builder();
-        builder.setSession("UblockDNS")
-               .addAddress("10.0.0.2", 24)
-               .addDnsServer("10.0.0.1")
-               .addRoute("10.0.0.1", 32)
-               .setBlocking(true);
+    private ParcelFileDescriptor configure() {
+        try {
+            Builder builder = new Builder();
+            builder.setSession("UblockDNS")
+                   .addAddress("10.0.0.2", 24)
+                   .addDnsServer("10.0.0.1")
+                   .addRoute("10.0.0.1", 32)
+                   .setBlocking(true);
 
-        mInterface = builder.establish();
+            mInterface = builder.establish();
+            return mInterface;
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to configure VPN", e);
+            return null;
+        }
     }
 
     private void closeInterface() {
-        if (mInterface != null) {
+        ParcelFileDescriptor pfd = mInterface;
+        mInterface = null;
+        if (pfd != null) {
             try {
-                mInterface.close();
+                pfd.close();
             } catch (IOException e) {
                 Log.e(TAG, "Failed to close interface", e);
             }
-            mInterface = null;
         }
     }
 }
