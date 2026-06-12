@@ -1,7 +1,7 @@
 dist/
 cli
-ublockdns
-ublockdnsclient
+/ublockdns
+/ublockdnsclient
 ublockdns-*
 *.test
 coverage.out

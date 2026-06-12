@@ -18,8 +18,9 @@ import (
 	"github.com/ugzv/ublockdnsclient/internal/updater"
 )
 
-//go:embed web_dist
+//go:embed *
 var WebFS embed.FS
+
 
 type Server struct {
 	addr        string
