@@ -13,7 +13,7 @@ var DB *sql.DB
 
 func InitDB(dataDir string) error {
 	dbPath := filepath.Join(dataDir, "ublockdns.db")
-	
+
 	// Open the database
 	var err error
 	DB, err = sql.Open("sqlite", dbPath)
@@ -32,7 +32,6 @@ func InitDB(dataDir string) error {
 	if err != nil {
 		log.Printf("DB PRAGMA error: %v", err)
 	}
-
 
 	// Initialize schema
 	schema := `
@@ -71,7 +70,7 @@ func InitDB(dataDir string) error {
 		domain TEXT PRIMARY KEY
 	);
 	`
-	
+
 	_, err = DB.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("failed to initialize schema: %w", err)

@@ -46,10 +46,10 @@ func (u *Updater) Start(ctx context.Context) {
 		log.Println("Catch-up sync required. Starting SyncMaster...")
 		go u.SyncMaster()
 	}
-	
+
 	// The infinite time.Timer loop has been removed for Android power efficiency.
 	// Android's native WorkManager will directly call SyncMaster() on a daily basis.
-	
+
 	// Handle ForceSync channel to keep API compatibility without the infinite loop
 	go func() {
 		for {
@@ -67,7 +67,7 @@ func (u *Updater) GetStatus() (lastUpdate int64, nextUpdate int64) {
 	var lastUpdateStr string
 	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_update'").Scan(&lastUpdateStr)
 	ts, _ := strconv.ParseInt(lastUpdateStr, 10, 64)
-	
+
 	now := time.Now()
 	nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
 	return ts, nextMidnight.Unix()
@@ -98,7 +98,7 @@ func (u *Updater) SyncMaster() {
 			log.Printf("Updater: failed to create request for %s: %v", list.URL, err)
 			continue
 		}
-		
+
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 
 		resp, err := client.Do(req)
@@ -106,7 +106,7 @@ func (u *Updater) SyncMaster() {
 			log.Printf("Updater: failed to download %s: %v", list.URL, err)
 			continue
 		}
-		
+
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			log.Printf("Updater: failed to download %s: status %d", list.URL, resp.StatusCode)
 			resp.Body.Close()
@@ -128,13 +128,13 @@ func (u *Updater) SyncMaster() {
 			continue
 		}
 	}
-	
+
 	// Record successful sync timestamp in SQLite
 	nowUnix := fmt.Sprintf("%d", time.Now().Unix())
 	db.DB.Exec("INSERT INTO app_state (key, value) VALUES ('last_update', ?) ON CONFLICT(key) DO UPDATE SET value = ?", nowUnix, nowUnix)
-	
+
 	log.Printf("Updater: master list repository sync complete.")
-	
+
 	if u.onSyncComplete != nil {
 		u.onSyncComplete()
 	}

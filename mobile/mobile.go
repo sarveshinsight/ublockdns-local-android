@@ -46,7 +46,7 @@ func Start(dataDir string) {
 			}
 		}
 	})
-	
+
 	// Start the updater
 	GlobalUpdater.Start(ctx)
 
@@ -103,11 +103,11 @@ func ProcessPacket(packet []byte) []byte {
 	}
 	ihl := int(versionIhl & 0x0F)
 	ipHeaderLen := ihl * 4
-	
+
 	if len(packet) < ipHeaderLen+8 {
 		return nil
 	}
-	
+
 	protocol := packet[9]
 	if protocol != 17 { // 17 = UDP
 		return nil
@@ -116,17 +116,17 @@ func ProcessPacket(packet []byte) []byte {
 	// Swap Source and Destination IPs for the response
 	srcIP := packet[12:16]
 	dstIP := packet[16:20]
-	
+
 	// Parse UDP Header
 	udpHeaderStart := ipHeaderLen
 	srcPort := packet[udpHeaderStart : udpHeaderStart+2]
 	dstPort := packet[udpHeaderStart+2 : udpHeaderStart+4]
-	
+
 	// Port 53 check (only process DNS queries)
 	if dstPort[0] != 0 || dstPort[1] != 53 {
 		return nil
 	}
-	
+
 	udpPayloadStart := udpHeaderStart + 8
 	dnsQueryBytes := packet[udpPayloadStart:]
 
@@ -151,22 +151,22 @@ func ProcessPacket(packet []byte) []byte {
 	// Craft IPv4 + UDP Response Packet
 	respPacketLen := ipHeaderLen + 8 + len(respBytes)
 	respPacket := make([]byte, respPacketLen)
-	
+
 	// Copy original IP header
 	copy(respPacket, packet[:ipHeaderLen])
-	
+
 	// Set Total Length
 	respPacket[2] = byte(respPacketLen >> 8)
 	respPacket[3] = byte(respPacketLen)
-	
+
 	// Swap IPs
 	copy(respPacket[12:16], dstIP)
 	copy(respPacket[16:20], srcIP)
-	
+
 	// We need to recalculate IPv4 Checksum (set to 0 first)
 	respPacket[10] = 0
 	respPacket[11] = 0
-	
+
 	var ipSum uint32
 	for i := 0; i < ipHeaderLen; i += 2 {
 		ipSum += uint32(respPacket[i])<<8 | uint32(respPacket[i+1])
@@ -179,17 +179,17 @@ func ProcessPacket(packet []byte) []byte {
 	respPacket[11] = byte(ipChecksum)
 
 	// Set UDP Header
-	copy(respPacket[ipHeaderLen:ipHeaderLen+2], dstPort) // Src Port
+	copy(respPacket[ipHeaderLen:ipHeaderLen+2], dstPort)   // Src Port
 	copy(respPacket[ipHeaderLen+2:ipHeaderLen+4], srcPort) // Dst Port
-	
+
 	udpLen := 8 + len(respBytes)
 	respPacket[ipHeaderLen+4] = byte(udpLen >> 8)
 	respPacket[ipHeaderLen+5] = byte(udpLen)
-	
+
 	// UDP Checksum (optional, set to 0 to ignore)
 	respPacket[ipHeaderLen+6] = 0
 	respPacket[ipHeaderLen+7] = 0
-	
+
 	// Copy DNS Response Payload
 	copy(respPacket[ipHeaderLen+8:], respBytes)
 

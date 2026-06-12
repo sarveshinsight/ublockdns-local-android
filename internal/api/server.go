@@ -69,7 +69,7 @@ func (s *Server) Start() error {
 
 	// Serve the static frontend using embedded filesystem
 	var staticFS http.FileSystem
-	
+
 	// Check if embedded filesystem is populated (for Android)
 	dir, err := WebFS.ReadDir("web_dist")
 	if err == nil && len(dir) > 0 {
@@ -79,7 +79,7 @@ func (s *Server) Start() error {
 		// Fallback for Desktop
 		staticFS = http.Dir("./web/dist")
 	}
-	
+
 	r.Handle("/*", http.FileServer(staticFS))
 
 	log.Printf("Starting API server on %s", s.addr)
@@ -149,7 +149,7 @@ func (s *Server) handleGetDomain(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing domain", http.StatusBadRequest)
 		return
 	}
-	
+
 	w.Header().Set("Content-Type", "application/json")
 	stats := s.dnsResolver.GetDomainStats(domain)
 	json.NewEncoder(w).Encode(stats)

@@ -48,7 +48,7 @@ func RouteActiveLists(dataDir string, activeURLs []string, allURLs []string) ([]
 	for _, u := range allURLs {
 		hash := fmt.Sprintf("%x", md5.Sum([]byte(u)))
 		masterPath := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash))
-		
+
 		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			continue
 		}
@@ -145,7 +145,7 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to begin tx: %v", err)
 	}
-	
+
 	_, err = tx.Exec("DELETE FROM blocklist_domains")
 	if err != nil {
 		tx.Rollback()
@@ -223,7 +223,7 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 func (e *Engine) Check(domain string, qtype uint16) (bool, string, int) {
 	domain = strings.TrimSuffix(domain, ".")
 	domain = strings.ToLower(domain)
-	
+
 	// 1. Check Custom Rules (InMemory)
 	if e.customEngine != nil {
 		res, matched := e.customEngine.Match(domain)
@@ -231,7 +231,7 @@ func (e *Engine) Check(domain string, qtype uint16) (bool, string, int) {
 			return true, res.NetworkRule.Text(), 9999
 		}
 	}
-	
+
 	// 2. Check LRU Cache
 	if cachedBlocked, ok := e.lruCache.Get(domain); ok {
 		if cachedBlocked {
@@ -268,7 +268,7 @@ func (e *Engine) Check(domain string, qtype uint16) (bool, string, int) {
 		e.lruCache.Add(domain, true)
 		return true, "Blocklist: " + matchedDomain, 0
 	}
-	
+
 	e.lruCache.Add(domain, false)
 	return false, "", 0
 }

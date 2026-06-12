@@ -55,7 +55,7 @@ func NewServer(addr string, upstream string, engine *filtering.Engine) *Server {
 func (s *Server) ListenAndServe() error {
 	mux := dns.NewServeMux()
 	mux.HandleFunc(".", s.handleRequest)
-	
+
 	server := &dns.Server{
 		Addr:    s.addr,
 		Net:     "udp4",
@@ -88,7 +88,7 @@ func (s *Server) ReloadConfig(cfg *config.Config, dataDir string) error {
 	defer s.mu.Unlock()
 	s.upstream = cfg.UpstreamDNS
 	s.engine = newEngine
-	
+
 	log.Printf("ReloadConfig SUCCESS")
 	return nil
 }
@@ -188,7 +188,7 @@ func (s *Server) GetDomainStats(domain string) map[string]interface{} {
 	s.mu.RLock()
 	eng := s.engine
 	s.mu.RUnlock()
-	
+
 	isBlocked := false
 	ruleTxt := ""
 	listID := 0
@@ -231,7 +231,7 @@ func (s *Server) GetDomainStats(domain string) map[string]interface{} {
 
 func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 	start := time.Now()
-	
+
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Compress = false
@@ -248,7 +248,7 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 	eng := s.engine
 	up := s.upstream
 	s.mu.RUnlock()
-	
+
 	isBlocked := false
 	ruleTxt := ""
 	listID := 0
@@ -271,7 +271,7 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 		default:
 			m.Rcode = dns.RcodeNameError // NXDOMAIN
 		}
-		
+
 		speed := time.Since(start).String()
 		s.logQueryAsync(q.Name, qtypeStr, "BLOCKED", speed, ruleTxt, listID)
 		return m
@@ -347,12 +347,12 @@ func (s *Server) startLogFlusher() {
 	defer ticker.Stop()
 
 	var batch []LogEntry
-	
+
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		
+
 		s.mu.Lock()
 		currentBatch := batch
 		batch = nil
@@ -362,7 +362,7 @@ func (s *Server) startLogFlusher() {
 		if err != nil {
 			return
 		}
-		
+
 		qStmt, _ := tx.Prepare("INSERT INTO query_logs (domain, type, action, speed, rule, list_id) VALUES (?, ?, ?, ?, ?, ?)")
 		dStmt, _ := tx.Prepare(`INSERT INTO domain_history (domain, count, blocked_count) VALUES (?, 1, ?) ON CONFLICT(domain) DO UPDATE SET count = count + 1, blocked_count = blocked_count + ?`)
 		tStmt, _ := tx.Prepare(`INSERT INTO time_history (bucket, queries, blocked) VALUES (?, 1, ?) ON CONFLICT(bucket) DO UPDATE SET queries = queries + 1, blocked = blocked + ?`)
@@ -373,19 +373,35 @@ func (s *Server) startLogFlusher() {
 			if l.Action == "BLOCKED" {
 				b = 1
 			}
-			
-			if qStmt != nil { qStmt.Exec(l.Domain, l.Type, l.Action, l.Speed, l.Rule, l.ListID) }
-			if dStmt != nil { dStmt.Exec(l.Domain, b, b) }
-			
+
+			if qStmt != nil {
+				qStmt.Exec(l.Domain, l.Type, l.Action, l.Speed, l.Rule, l.ListID)
+			}
+			if dStmt != nil {
+				dStmt.Exec(l.Domain, b, b)
+			}
+
 			bucket := time.Now().Truncate(5 * time.Minute).Unix()
-			if tStmt != nil { tStmt.Exec(bucket, b, b) }
-			if dtStmt != nil { dtStmt.Exec(l.Domain, bucket, b, b) }
+			if tStmt != nil {
+				tStmt.Exec(bucket, b, b)
+			}
+			if dtStmt != nil {
+				dtStmt.Exec(l.Domain, bucket, b, b)
+			}
 		}
-		
-		if qStmt != nil { qStmt.Close() }
-		if dStmt != nil { dStmt.Close() }
-		if tStmt != nil { tStmt.Close() }
-		if dtStmt != nil { dtStmt.Close() }
+
+		if qStmt != nil {
+			qStmt.Close()
+		}
+		if dStmt != nil {
+			dStmt.Close()
+		}
+		if tStmt != nil {
+			tStmt.Close()
+		}
+		if dtStmt != nil {
+			dtStmt.Close()
+		}
 
 		// Cleanup old logs
 		tx.Exec("DELETE FROM query_logs WHERE id < (SELECT MAX(id) FROM query_logs) - 10000")
@@ -411,7 +427,7 @@ func (s *Server) startLogFlusher() {
 func (s *Server) logQueryAsync(domain, qtype, action, speed, rule string, listID int) {
 	// Trim trailing dot
 	domain = strings.TrimSuffix(domain, ".")
-	
+
 	// Non-blocking send
 	select {
 	case s.logQueue <- LogEntry{

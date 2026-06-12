@@ -1,0 +1,37 @@
+name: Build and Release Android APK
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    
+    # We need contents: write permission to create/update releases
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Build Android APK via Docker
+        run: |
+          echo "Building Docker image..."
+          docker build -t ublockdns-android-builder -f Dockerfile.android .
+          
+          echo "Running compiler container..."
+          docker run --name ublockdns-android-compiler -v "${PWD}:/workspace" ublockdns-android-builder
+
+      - name: Update Beta Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: "beta-1"
+          name: "Latest Beta Release"
+          body: "Automated continuous build from the main branch."
+          artifacts: "ublockdns-android.apk"
+          allowUpdates: true
+          makeLatest: true
+          prerelease: true
