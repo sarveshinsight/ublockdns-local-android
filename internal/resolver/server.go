@@ -360,6 +360,10 @@ func (s *Server) startLogFlusher() {
 
 		tx, err := db.DB.Begin()
 		if err != nil {
+			// Restore batch so we don't lose logs during DB locks (e.g. rebuilds)
+			s.mu.Lock()
+			batch = append(currentBatch, batch...)
+			s.mu.Unlock()
 			return
 		}
 

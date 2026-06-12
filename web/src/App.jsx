@@ -193,15 +193,15 @@ export default function App() {
     </div>
   )};
 
-  const upstreamOptions = [
-    { name: 'Automatic (Cloudflare + Google)', value: '1.1.1.1:53,8.8.8.8:53' },
-    { name: 'Privacy Focus (Cloudflare + Quad9)', value: '1.1.1.1:53,9.9.9.9:53' },
-    { name: 'Security Focus (Quad9 + AdGuard)', value: '9.9.9.9:53,94.140.14.14:53' },
-    { name: 'Filtering Focus (AdGuard + Cloudflare Family)', value: '94.140.14.14:53,1.1.1.3:53' },
-    { name: 'Google Public DNS', value: '8.8.8.8:53' },
-    { name: 'Cloudflare', value: '1.1.1.1:53' },
-    { name: 'Quad9', value: '9.9.9.9:53' },
-    { name: 'AdGuard DNS', value: '94.140.14.14:53' }
+  const upstreamProfiles = [
+    { name: 'Automatic (Cloudflare + Google)', value: '1.1.1.1:853,8.8.8.8:853' },
+    { name: 'Privacy Focus (Cloudflare + Quad9)', value: '1.1.1.1:853,9.9.9.9:853' },
+    { name: 'Security Focus (Quad9 + AdGuard)', value: '9.9.9.9:853,94.140.14.14:853' },
+    { name: 'Filtering Focus (AdGuard + Cloudflare Family)', value: '94.140.14.14:853,1.1.1.3:853' },
+    { name: 'Google Public DNS', value: '8.8.8.8:853' },
+    { name: 'Cloudflare', value: '1.1.1.1:853' },
+    { name: 'Quad9', value: '9.9.9.9:853' },
+    { name: 'AdGuard DNS', value: '94.140.14.14:853' }
   ];
 
   const handleUpstreamChange = async (e) => {
@@ -224,14 +224,14 @@ export default function App() {
         </p>
         <select 
           style={{width: '100%', padding: '12px', background: 'rgba(0,0,0,0.5)', border: '1px solid var(--glass-border)', borderRadius: '12px', color: 'white', fontSize: '0.9rem'}}
-          value={config?.upstream_dns || '1.1.1.1:53,8.8.8.8:53'}
+          value={config?.upstream_dns || '1.1.1.1:853,8.8.8.8:853'}
           onChange={handleUpstreamChange}
         >
           <optgroup label="Presets (Concurrent)">
-            {upstreamOptions.slice(0, 4).map(p => <option key={p.value} value={p.value}>{p.name}</option>)}
+            {upstreamProfiles.slice(0, 4).map(p => <option key={p.value} value={p.value}>{p.name}</option>)}
           </optgroup>
           <optgroup label="Specific Providers">
-            {upstreamOptions.slice(4).map(p => <option key={p.value} value={p.value}>{p.name}</option>)}
+            {upstreamProfiles.slice(4).map(p => <option key={p.value} value={p.value}>{p.name}</option>)}
           </optgroup>
         </select>
       </div>

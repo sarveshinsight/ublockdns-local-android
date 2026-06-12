@@ -34,12 +34,9 @@ func Start(dataDir string) {
 	cfg, err := config.Load(filepath.Join(dataDir, "config.yaml"))
 	if err != nil || cfg == nil {
 		cfg = &config.Config{
-			UpstreamDNS: "1.1.1.1:53,8.8.8.8:53",
+			UpstreamDNS: "1.1.1.1:853,8.8.8.8:853",
 			ListenAddr:  "127.0.0.1:10053",
 		}
-	} else if cfg.UpstreamDNS == "1.1.1.1:853,8.8.8.8:853" {
-		cfg.UpstreamDNS = "1.1.1.1:53,8.8.8.8:53"
-		config.SaveConfig(filepath.Join(dataDir, "config.yaml"), cfg)
 	}
 
 	db.InitDB(dataDir)
