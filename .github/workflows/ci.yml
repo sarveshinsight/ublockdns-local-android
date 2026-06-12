@@ -26,6 +26,11 @@ jobs:
             exit 1
           fi
 
+      - name: Create dummy web_dist
+        run: |
+          mkdir -p internal/api/web_dist
+          touch internal/api/web_dist/.gitkeep
+
       - name: Vet
         run: go vet ./...
 
