@@ -26,18 +26,25 @@ public class DnsVpnService extends VpnService implements Runnable {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "onStartCommand called");
         sInstance = this;
-        mStopping = false;
+        mStopping = true; // Signal any old thread to stop
         isRunning = true;
 
-        // Kill any existing thread before starting fresh
+        // Kill any existing thread and WAIT for it to die
         if (mThread != null) {
             mThread.interrupt();
+            try {
+                mThread.join(2000); // Wait up to 2 seconds for old thread to die
+            } catch (InterruptedException e) {
+                Log.w(TAG, "Interrupted while waiting for old thread");
+            }
             mThread = null;
         }
 
         // Close any lingering interface from a previous run
         closeInterface();
 
+        // Now safe to start fresh
+        mStopping = false;
         mThread = new Thread(this, "DnsVpnThread");
         mThread.start();
         return START_STICKY;
@@ -45,23 +52,19 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     /**
      * Cleanly tears down the VPN tunnel.
-     * Can be called from any thread.
      */
     public void disconnect() {
         Log.i(TAG, "disconnect() called");
         mStopping = true;
         isRunning = false;
 
-        // 1. Close the TUN fd — unblocks the blocking read()
         closeInterface();
 
-        // 2. Interrupt the worker thread
         if (mThread != null) {
             mThread.interrupt();
             mThread = null;
         }
 
-        // 3. Stop the service
         stopSelf();
         sInstance = null;
     }
@@ -99,17 +102,20 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     @Override
     public void run() {
-        ParcelFileDescriptor localInterface = null;
+        // Capture our OWN local reference to the interface.
+        // This way the finally block only closes THIS thread's interface,
+        // never a new one created by a subsequent reconnect.
+        ParcelFileDescriptor myInterface = null;
         try {
-            localInterface = configure();
-            if (localInterface == null) {
+            myInterface = configure();
+            if (myInterface == null) {
                 Log.e(TAG, "Failed to establish VPN interface");
                 isRunning = false;
                 return;
             }
 
-            FileInputStream in = new FileInputStream(localInterface.getFileDescriptor());
-            FileOutputStream out = new FileOutputStream(localInterface.getFileDescriptor());
+            FileInputStream in = new FileInputStream(myInterface.getFileDescriptor());
+            FileOutputStream out = new FileOutputStream(myInterface.getFileDescriptor());
 
             byte[] packet = new byte[32767];
 
@@ -125,7 +131,6 @@ public class DnsVpnService extends VpnService implements Runnable {
                         out.write(responseBytes);
                     }
                 } else if (length < 0) {
-                    // EOF — fd was closed
                     break;
                 }
             }
@@ -134,9 +139,18 @@ public class DnsVpnService extends VpnService implements Runnable {
                 Log.e(TAG, "VPN loop error", e);
             }
         } finally {
-            closeInterface();
+            // ONLY close OUR interface — never touch mInterface here.
+            // disconnect() and onDestroy() handle closing mInterface.
+            // This prevents the race where the old thread's finally block
+            // closes a NEW interface created by a reconnect.
+            if (myInterface != null) {
+                try {
+                    myInterface.close();
+                } catch (IOException e) {
+                    // Already closed by disconnect(), that's fine
+                }
+            }
             if (!mStopping) {
-                // Unexpected exit — mark as not running
                 isRunning = false;
             }
         }
