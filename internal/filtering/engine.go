@@ -101,7 +101,7 @@ func copyFile(src, dst string) error {
 }
 
 func extractDomain(line string) string {
-	line = strings.TrimSpace(line)
+	line = strings.ToLower(strings.TrimSpace(line))
 	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
 		return ""
 	}
@@ -145,7 +145,7 @@ func NewEngine(listPaths []string, customRules []string, dataDir string) (*Engin
 	
 	pathsHash := fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(listPaths, ","))))
 	var lastHash string
-	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_parsed_hash'").Scan(&lastHash)
+	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_parsed_hash_v2'").Scan(&lastHash)
 
 	if pathsHash == lastHash {
 		f, err := os.Open(bloomPath)
@@ -205,17 +205,18 @@ func NewEngine(listPaths []string, customRules []string, dataDir string) (*Engin
 				if domainCount%batchSize == 0 {
 					log.Printf("Parsed %d domains so far...", domainCount)
 					stmt.Close()
-					tx.Commit()
+					err = tx.Commit()
+					if err != nil {
+						return nil, fmt.Errorf("failed to commit batch tx: %v", err)
+					}
 
 					tx, err = db.DB.Begin()
 					if err != nil {
-						log.Printf("Failed to begin batch tx: %v", err)
-						continue
+						return nil, fmt.Errorf("failed to begin batch tx: %v", err)
 					}
 					stmt, err = tx.Prepare("INSERT OR IGNORE INTO blocklist_domains (domain) VALUES (?)")
 					if err != nil {
-						log.Printf("Failed to prepare batch stmt: %v", err)
-						continue
+						return nil, fmt.Errorf("failed to prepare batch stmt: %v", err)
 					}
 				}
 			}
@@ -229,10 +230,10 @@ func NewEngine(listPaths []string, customRules []string, dataDir string) (*Engin
 	stmt.Close()
 	err = tx.Commit()
 	if err != nil {
-		log.Printf("failed to commit final tx: %v", err)
+		return nil, fmt.Errorf("failed to commit final tx: %v", err)
 	}
 
-	db.DB.Exec("INSERT INTO app_state (key, value) VALUES ('last_parsed_hash', ?) ON CONFLICT(key) DO UPDATE SET value = ?", pathsHash, pathsHash)
+	db.DB.Exec("INSERT INTO app_state (key, value) VALUES ('last_parsed_hash_v2', ?) ON CONFLICT(key) DO UPDATE SET value = ?", pathsHash, pathsHash)
 
 	// Save Bloom filter to binary cache
 	f, err := os.Create(bloomPath)

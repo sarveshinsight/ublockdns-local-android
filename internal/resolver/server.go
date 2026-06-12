@@ -343,7 +343,7 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (s *Server) startLogFlusher() {
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	var batch []LogEntry

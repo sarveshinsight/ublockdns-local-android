@@ -45,7 +45,7 @@ export default function App() {
 
   useEffect(() => {
     fetchData()
-    const interval = setInterval(fetchData, 2000)
+    const interval = setInterval(fetchData, 1000)
     return () => clearInterval(interval)
   }, [config, logLimit])
 
