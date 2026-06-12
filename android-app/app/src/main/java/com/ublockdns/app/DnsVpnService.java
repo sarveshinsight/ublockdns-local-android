@@ -11,12 +11,11 @@ import java.io.IOException;
 
 import mobile.Mobile;
 
-public class DnsVpnService extends VpnService implements Runnable {
+public class DnsVpnService extends VpnService {
     private static final String TAG = "DnsVpnService";
 
+    private VpnWorker mWorker;
     private Thread mThread;
-    private ParcelFileDescriptor mInterface;
-    private volatile boolean mStopping = false;
 
     // Static reference so MainActivity can directly call disconnect
     private static DnsVpnService sInstance;
@@ -26,28 +25,33 @@ public class DnsVpnService extends VpnService implements Runnable {
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "onStartCommand called");
         sInstance = this;
-        mStopping = true; // Signal any old thread to stop
         isRunning = true;
 
-        // Kill any existing thread and WAIT for it to die
+        // Clean up any existing worker/thread completely before starting a new one
+        stopActiveWorker();
+
+        // Create and start a fresh worker
+        mWorker = new VpnWorker();
+        mThread = new Thread(mWorker, "DnsVpnThread");
+        mThread.start();
+
+        return START_STICKY;
+    }
+
+    private void stopActiveWorker() {
+        if (mWorker != null) {
+            mWorker.stop(); // This closes the FD, unblocking the thread
+        }
         if (mThread != null) {
             mThread.interrupt();
             try {
-                mThread.join(2000); // Wait up to 2 seconds for old thread to die
+                mThread.join(2000); // Wait for it to die cleanly
             } catch (InterruptedException e) {
-                Log.w(TAG, "Interrupted while waiting for old thread");
+                Log.w(TAG, "Interrupted while joining old thread");
             }
             mThread = null;
         }
-
-        // Close any lingering interface from a previous run
-        closeInterface();
-
-        // Now safe to start fresh
-        mStopping = false;
-        mThread = new Thread(this, "DnsVpnThread");
-        mThread.start();
-        return START_STICKY;
+        mWorker = null;
     }
 
     /**
@@ -55,15 +59,9 @@ public class DnsVpnService extends VpnService implements Runnable {
      */
     public void disconnect() {
         Log.i(TAG, "disconnect() called");
-        mStopping = true;
         isRunning = false;
 
-        closeInterface();
-
-        if (mThread != null) {
-            mThread.interrupt();
-            mThread = null;
-        }
+        stopActiveWorker();
 
         stopSelf();
         sInstance = null;
@@ -84,12 +82,7 @@ public class DnsVpnService extends VpnService implements Runnable {
     public void onDestroy() {
         Log.i(TAG, "onDestroy() called");
         isRunning = false;
-        mStopping = true;
-        closeInterface();
-        if (mThread != null) {
-            mThread.interrupt();
-            mThread = null;
-        }
+        stopActiveWorker();
         sInstance = null;
         super.onDestroy();
     }
@@ -100,87 +93,79 @@ public class DnsVpnService extends VpnService implements Runnable {
         disconnect();
     }
 
-    @Override
-    public void run() {
-        // Capture our OWN local reference to the interface.
-        // This way the finally block only closes THIS thread's interface,
-        // never a new one created by a subsequent reconnect.
-        ParcelFileDescriptor myInterface = null;
-        try {
-            myInterface = configure();
-            if (myInterface == null) {
-                Log.e(TAG, "Failed to establish VPN interface");
-                isRunning = false;
-                return;
-            }
+    private class VpnWorker implements Runnable {
+        private ParcelFileDescriptor mLocalInterface;
+        private volatile boolean mStopping = false;
 
-            FileInputStream in = new FileInputStream(myInterface.getFileDescriptor());
-            FileOutputStream out = new FileOutputStream(myInterface.getFileDescriptor());
-
-            byte[] packet = new byte[32767];
-
-            while (!Thread.currentThread().isInterrupted() && !mStopping) {
-                int length = in.read(packet);
-                if (length > 0) {
-                    byte[] requestBytes = new byte[length];
-                    System.arraycopy(packet, 0, requestBytes, 0, length);
-
-                    byte[] responseBytes = Mobile.processPacket(requestBytes);
-
-                    if (responseBytes != null && responseBytes.length > 0) {
-                        out.write(responseBytes);
-                    }
-                } else if (length < 0) {
-                    break;
-                }
-            }
-        } catch (Exception e) {
-            if (!mStopping) {
-                Log.e(TAG, "VPN loop error", e);
-            }
-        } finally {
-            // ONLY close OUR interface — never touch mInterface here.
-            // disconnect() and onDestroy() handle closing mInterface.
-            // This prevents the race where the old thread's finally block
-            // closes a NEW interface created by a reconnect.
-            if (myInterface != null) {
+        public void stop() {
+            mStopping = true;
+            // Closing the FD is the ONLY way to unblock FileInputStream.read() in Android
+            if (mLocalInterface != null) {
                 try {
-                    myInterface.close();
+                    mLocalInterface.close();
                 } catch (IOException e) {
-                    // Already closed by disconnect(), that's fine
+                    Log.e(TAG, "Error closing local interface", e);
                 }
             }
-            if (!mStopping) {
-                isRunning = false;
+        }
+
+        @Override
+        public void run() {
+            try {
+                mLocalInterface = configure();
+                if (mLocalInterface == null) {
+                    Log.e(TAG, "Failed to establish VPN interface");
+                    if (mWorker == this) isRunning = false;
+                    return;
+                }
+
+                FileInputStream in = new FileInputStream(mLocalInterface.getFileDescriptor());
+                FileOutputStream out = new FileOutputStream(mLocalInterface.getFileDescriptor());
+
+                byte[] packet = new byte[32767];
+
+                while (!Thread.currentThread().isInterrupted() && !mStopping) {
+                    int length = in.read(packet);
+                    if (length > 0) {
+                        byte[] requestBytes = new byte[length];
+                        System.arraycopy(packet, 0, requestBytes, 0, length);
+
+                        byte[] responseBytes = Mobile.processPacket(requestBytes);
+
+                        if (responseBytes != null && responseBytes.length > 0) {
+                            out.write(responseBytes);
+                        }
+                    } else if (length < 0) {
+                        // EOF
+                        break;
+                    }
+                }
+            } catch (Exception e) {
+                if (!mStopping) {
+                    Log.e(TAG, "VPN loop error", e);
+                }
+            } finally {
+                stop();
+                // Only update global state if this is still the active worker
+                if (mWorker == this && !mStopping) {
+                    isRunning = false;
+                }
             }
         }
-    }
 
-    private ParcelFileDescriptor configure() {
-        try {
-            Builder builder = new Builder();
-            builder.setSession("UblockDNS")
-                   .addAddress("10.0.0.2", 24)
-                   .addDnsServer("10.0.0.1")
-                   .addRoute("10.0.0.1", 32)
-                   .setBlocking(true);
-
-            mInterface = builder.establish();
-            return mInterface;
-        } catch (Exception e) {
-            Log.e(TAG, "Failed to configure VPN", e);
-            return null;
-        }
-    }
-
-    private void closeInterface() {
-        ParcelFileDescriptor pfd = mInterface;
-        mInterface = null;
-        if (pfd != null) {
+        private ParcelFileDescriptor configure() {
             try {
-                pfd.close();
-            } catch (IOException e) {
-                Log.e(TAG, "Failed to close interface", e);
+                Builder builder = new Builder();
+                builder.setSession("UblockDNS")
+                       .addAddress("10.0.0.2", 24)
+                       .addDnsServer("10.0.0.1")
+                       .addRoute("10.0.0.1", 32)
+                       .setBlocking(true);
+
+                return builder.establish();
+            } catch (Exception e) {
+                Log.e(TAG, "Failed to configure VPN", e);
+                return null;
             }
         }
     }
