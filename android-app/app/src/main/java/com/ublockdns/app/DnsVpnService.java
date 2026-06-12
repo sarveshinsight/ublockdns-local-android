@@ -13,12 +13,21 @@ import mobile.Mobile;
 
 public class DnsVpnService extends VpnService implements Runnable {
     private static final String TAG = "DnsVpnService";
+    public static final String ACTION_DISCONNECT = "com.ublockdns.app.DISCONNECT";
+
     private Thread mThread;
     private ParcelFileDescriptor mInterface;
     public static volatile boolean isRunning = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Handle disconnect intent
+        if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
+            disconnect();
+            return START_NOT_STICKY;
+        }
+
+        // Normal start - set up VPN
         isRunning = true;
         if (mThread != null) {
             mThread.interrupt();
@@ -28,45 +37,73 @@ public class DnsVpnService extends VpnService implements Runnable {
         return START_STICKY;
     }
 
+    /**
+     * Cleanly tears down the VPN tunnel, stops the thread, and kills the service.
+     */
+    private void disconnect() {
+        isRunning = false;
+
+        // 1. Close the TUN file descriptor first - this unblocks the blocking read()
+        closeInterface();
+
+        // 2. Interrupt the worker thread
+        if (mThread != null) {
+            mThread.interrupt();
+            mThread = null;
+        }
+
+        // 3. Stop the service from within itself - this is the reliable way
+        stopSelf();
+    }
+
     @Override
     public void onDestroy() {
         isRunning = false;
-        closeInterface(); // Close first to unblock the I/O read() loop
+        closeInterface();
         if (mThread != null) {
             mThread.interrupt();
+            mThread = null;
         }
         super.onDestroy();
+    }
+
+    @Override
+    public void onRevoke() {
+        // Called by Android when the user revokes VPN permission from system settings
+        disconnect();
     }
 
     @Override
     public void run() {
         try {
             configure();
-            
+
             FileInputStream in = new FileInputStream(mInterface.getFileDescriptor());
             FileOutputStream out = new FileOutputStream(mInterface.getFileDescriptor());
-            
+
             byte[] packet = new byte[32767];
-            
-            while (!Thread.currentThread().isInterrupted()) {
+
+            while (!Thread.currentThread().isInterrupted() && mInterface != null) {
                 int length = in.read(packet);
                 if (length > 0) {
                     byte[] requestBytes = new byte[length];
                     System.arraycopy(packet, 0, requestBytes, 0, length);
-                    
-                    // Pass the raw IP packet to Go
+
                     byte[] responseBytes = Mobile.processPacket(requestBytes);
-                    
-                    // If Go processed it and returned a response IP packet, write it back to the TUN interface
+
                     if (responseBytes != null && responseBytes.length > 0) {
                         out.write(responseBytes);
                     }
+                } else if (length < 0) {
+                    // EOF - file descriptor was closed, exit the loop
+                    break;
                 }
             }
         } catch (Exception e) {
-            Log.e(TAG, "VPN loop failed", e);
+            Log.e(TAG, "VPN loop ended", e);
         } finally {
             closeInterface();
+            isRunning = false;
         }
     }
 

@@ -98,7 +98,8 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void run() {
                     Intent intent = new Intent(MainActivity.this, DnsVpnService.class);
-                    stopService(intent);
+                    intent.setAction(DnsVpnService.ACTION_DISCONNECT);
+                    startService(intent);
                 }
             });
         }
