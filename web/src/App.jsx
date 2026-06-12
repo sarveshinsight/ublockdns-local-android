@@ -62,12 +62,14 @@ export default function App() {
     if (!isConnected) {
       if (window.Android) {
         window.Android.startVpn()
+        setIsConnected(true)
       } else {
         alert("Not running inside Android App")
       }
     } else {
       if (window.Android) {
         window.Android.stopVpn()
+        setIsConnected(false)
       }
     }
   }

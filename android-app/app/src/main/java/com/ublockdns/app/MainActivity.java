@@ -97,9 +97,11 @@ public class MainActivity extends AppCompatActivity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    // Direct call — most reliable, no intent routing needed
+                    DnsVpnService.requestDisconnect();
+                    // Belt-and-suspenders: also tell Android to stop the service
                     Intent intent = new Intent(MainActivity.this, DnsVpnService.class);
-                    intent.setAction(DnsVpnService.ACTION_DISCONNECT);
-                    startService(intent);
+                    stopService(intent);
                 }
             });
         }

@@ -13,22 +13,19 @@ import mobile.Mobile;
 
 public class DnsVpnService extends VpnService implements Runnable {
     private static final String TAG = "DnsVpnService";
-    public static final String ACTION_DISCONNECT = "com.ublockdns.app.DISCONNECT";
 
     private Thread mThread;
     private ParcelFileDescriptor mInterface;
+
+    // Static reference so MainActivity can directly call disconnect
+    private static DnsVpnService sInstance;
     public static volatile boolean isRunning = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Handle disconnect intent
-        if (intent != null && ACTION_DISCONNECT.equals(intent.getAction())) {
-            disconnect();
-            return START_NOT_STICKY;
-        }
-
-        // Normal start - set up VPN
+        sInstance = this;
         isRunning = true;
+
         if (mThread != null) {
             mThread.interrupt();
         }
@@ -38,12 +35,14 @@ public class DnsVpnService extends VpnService implements Runnable {
     }
 
     /**
-     * Cleanly tears down the VPN tunnel, stops the thread, and kills the service.
+     * Called directly from MainActivity.stopVpn() via the static reference.
+     * Tears down the VPN tunnel, stops the thread, and kills the service.
      */
-    private void disconnect() {
+    public void disconnect() {
+        Log.i(TAG, "disconnect() called");
         isRunning = false;
 
-        // 1. Close the TUN file descriptor first - this unblocks the blocking read()
+        // 1. Close the TUN fd — this unblocks the blocking read() in run()
         closeInterface();
 
         // 2. Interrupt the worker thread
@@ -52,24 +51,40 @@ public class DnsVpnService extends VpnService implements Runnable {
             mThread = null;
         }
 
-        // 3. Stop the service from within itself - this is the reliable way
+        // 3. Stop the service from within
         stopSelf();
+        sInstance = null;
+    }
+
+    /**
+     * Static helper so MainActivity can trigger disconnect without needing
+     * to send an intent through the Android service machinery.
+     */
+    public static void requestDisconnect() {
+        Log.i(TAG, "requestDisconnect() called, sInstance=" + sInstance);
+        isRunning = false;
+        if (sInstance != null) {
+            sInstance.disconnect();
+        }
     }
 
     @Override
     public void onDestroy() {
+        Log.i(TAG, "onDestroy() called");
         isRunning = false;
         closeInterface();
         if (mThread != null) {
             mThread.interrupt();
             mThread = null;
         }
+        sInstance = null;
         super.onDestroy();
     }
 
     @Override
     public void onRevoke() {
-        // Called by Android when the user revokes VPN permission from system settings
+        // Called by Android when user revokes VPN from system settings
+        Log.i(TAG, "onRevoke() called");
         disconnect();
     }
 
@@ -95,7 +110,7 @@ public class DnsVpnService extends VpnService implements Runnable {
                         out.write(responseBytes);
                     }
                 } else if (length < 0) {
-                    // EOF - file descriptor was closed, exit the loop
+                    // EOF — fd was closed, exit cleanly
                     break;
                 }
             }
