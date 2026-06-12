@@ -59,9 +59,11 @@ WORKDIR /workspace
 # Default command to build the app
 CMD ["bash", "-c", "\
     echo 'Building Frontend...' && \
-    cd web && npm install && npm run build && cd .. && \
+    cp -r web /tmp/web && \
+    cd /tmp/web && npm install && npm run build && \
+    cd /workspace && \
     mkdir -p internal/api/web_dist && \
-    cp -r web/dist/* internal/api/web_dist/ && \
+    cp -r /tmp/web/dist/* internal/api/web_dist/ && \
     echo 'Building Gomobile library...' && \
     go get -tool golang.org/x/mobile/cmd/gobind && \
     go get golang.org/x/mobile/bind && \

@@ -78,7 +78,7 @@ func (s *Server) ReloadConfig(cfg *config.Config, dataDir string) error {
 		return err
 	}
 
-	newEngine, err := filtering.NewEngine(paths, cfg.CustomRules)
+	newEngine, err := filtering.NewEngine(paths, cfg.CustomRules, dataDir)
 	if err != nil {
 		log.Printf("ReloadConfig NewEngine error: %v", err)
 		return err

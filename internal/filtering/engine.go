@@ -122,7 +122,7 @@ func extractDomain(line string) string {
 	return line
 }
 
-func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
+func NewEngine(listPaths []string, customRules []string, dataDir string) (*Engine, error) {
 	var customEngine *urlfilter.DNSEngine
 
 	if len(customRules) > 0 {
@@ -138,8 +138,9 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 
 	cache, _ := lru.New[string, bool](100000)
 	bf := bloom.NewWithEstimates(5000000, 0.01)
+	bloomPath := filepath.Join(dataDir, "bloom.bin")
 
-	// Check if we can use the cached SQLite database
+	// Check if we can use the cached SQLite database and binary bloom filter
 	db.DB.Exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT)")
 	
 	pathsHash := fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(listPaths, ","))))
@@ -147,26 +148,20 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_parsed_hash'").Scan(&lastHash)
 
 	if pathsHash == lastHash {
-		log.Printf("Blocklists unchanged, loading Bloom Filter directly from SQLite...")
-		rows, err := db.DB.Query("SELECT domain FROM blocklist_domains")
+		f, err := os.Open(bloomPath)
 		if err == nil {
-			domainCount := 0
-			for rows.Next() {
-				var d string
-				rows.Scan(&d)
-				bf.AddString(d)
-				domainCount++
+			_, err = bf.ReadFrom(f)
+			f.Close()
+			if err == nil {
+				log.Printf("Successfully loaded Bloom Filter from binary cache.")
+				return &Engine{
+					customEngine: customEngine,
+					bloomFilter:  bf,
+					lruCache:     cache,
+				}, nil
 			}
-			rows.Close()
-			log.Printf("Successfully loaded %d domains from SQLite cache.", domainCount)
-			
-			return &Engine{
-				customEngine: customEngine,
-				bloomFilter:  bf,
-				lruCache:     cache,
-			}, nil
 		}
-		log.Printf("Failed to load from SQLite cache, rebuilding...")
+		log.Printf("Failed to load from binary cache, rebuilding from scratch...")
 	}
 
 	log.Printf("Parsing %d blocklists and building Bloom Filter / SQLite DB...", len(listPaths))
@@ -238,6 +233,15 @@ func NewEngine(listPaths []string, customRules []string) (*Engine, error) {
 	}
 
 	db.DB.Exec("INSERT INTO app_state (key, value) VALUES ('last_parsed_hash', ?) ON CONFLICT(key) DO UPDATE SET value = ?", pathsHash, pathsHash)
+
+	// Save Bloom filter to binary cache
+	f, err := os.Create(bloomPath)
+	if err == nil {
+		bf.WriteTo(f)
+		f.Close()
+	} else {
+		log.Printf("Failed to save bloom filter: %v", err)
+	}
 
 	log.Printf("Successfully indexed %d domains into Bloom Filter and SQLite.", domainCount)
 
