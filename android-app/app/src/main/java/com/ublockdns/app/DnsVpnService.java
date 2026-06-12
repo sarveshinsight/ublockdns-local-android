@@ -158,11 +158,8 @@ public class DnsVpnService extends VpnService {
                 Builder builder = new Builder();
                 builder.setSession("UblockDNS")
                        .addAddress("10.0.0.2", 24)
-                       .addAddress("fd00:1:fd00:1:fd00:1:fd00:1", 64)
                        .addDnsServer("10.0.0.1")
-                       .addDnsServer("fd00:1:fd00:1:fd00:1:fd00:2")
                        .addRoute("10.0.0.1", 32)
-                       .addRoute("fd00:1:fd00:1:fd00:1:fd00:2", 128)
                        .setBlocking(true);
 
                 return builder.establish();
