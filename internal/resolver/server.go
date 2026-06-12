@@ -235,6 +235,7 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 	m := new(dns.Msg)
 	m.SetReply(r)
 	m.Compress = false
+	m.RecursionAvailable = true
 
 	if len(r.Question) == 0 {
 		m.Rcode = dns.RcodeFormatError
@@ -298,10 +299,12 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 	resc := make(chan result, len(validUpstreams))
 	for _, u := range validUpstreams {
 		go func(addr string) {
-			netType := "udp4"
+			// FORCE UDP for performance since miekg/dns does not implement connection pooling.
+			// Creating a new TLS connection for every query causes massive delays and timeouts.
 			if strings.HasSuffix(addr, ":853") {
-				netType = "tcp-tls"
+				addr = strings.Replace(addr, ":853", ":53", 1)
 			}
+			netType := "udp4"
 			client := &dns.Client{
 				Net:     netType,
 				Timeout: 5 * time.Second,
