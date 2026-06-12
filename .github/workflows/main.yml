@@ -71,7 +71,7 @@ jobs:
           docker build -t ublockdns-android-builder -f Dockerfile.android .
           
           echo "Running compiler container..."
-          docker run --name ublockdns-android-compiler -v "${PWD}:/workspace" ublockdns-android-builder
+          docker run --name ublockdns-android-compiler --rm -v "${PWD}:/workspace" -v ublockdns-gradle-cache:/root/.gradle -v ublockdns-go-cache:/root/go/pkg -v ublockdns-go-build-cache:/root/.cache/go-build -v ublockdns-npm-cache:/root/.npm ublockdns-android-builder
 
       - name: Update Beta Release
         uses: ncipollo/release-action@v1

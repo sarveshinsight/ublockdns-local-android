@@ -8,8 +8,14 @@ if ($LASTEXITCODE -ne 0) {
 
 Write-Host "Running compilation inside Docker..."
 # Mount current directory into /workspace to retrieve the APK
-docker rm -f ublockdns-android-compiler
-docker run --name ublockdns-android-compiler -v "${PWD}:/workspace" ublockdns-android-builder
+# Mount Docker volumes for caches to significantly speed up subsequent builds
+docker run --name ublockdns-android-compiler --rm `
+    -v "${PWD}:/workspace" `
+    -v ublockdns-gradle-cache:/root/.gradle `
+    -v ublockdns-go-cache:/root/go/pkg `
+    -v ublockdns-go-build-cache:/root/.cache/go-build `
+    -v ublockdns-npm-cache:/root/.npm `
+    ublockdns-android-builder
 
 if ($LASTEXITCODE -ne 0) {
     Write-Host "Android APK build failed!" -ForegroundColor Red
