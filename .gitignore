@@ -10,3 +10,7 @@ history.json
 *.exe
 *.txt
 data/
+android-app/app/build/
+internal/api/web_dist/
+*.apk
+*.aar
