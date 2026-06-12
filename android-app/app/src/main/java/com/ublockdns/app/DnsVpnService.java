@@ -15,10 +15,11 @@ public class DnsVpnService extends VpnService implements Runnable {
     private static final String TAG = "DnsVpnService";
     private Thread mThread;
     private ParcelFileDescriptor mInterface;
+    public static volatile boolean isRunning = false;
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-
+        isRunning = true;
         if (mThread != null) {
             mThread.interrupt();
         }
@@ -29,6 +30,7 @@ public class DnsVpnService extends VpnService implements Runnable {
 
     @Override
     public void onDestroy() {
+        isRunning = false;
         closeInterface(); // Close first to unblock the I/O read() loop
         if (mThread != null) {
             mThread.interrupt();

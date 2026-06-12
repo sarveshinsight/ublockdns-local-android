@@ -73,6 +73,11 @@ public class MainActivity extends AppCompatActivity {
 
     public class WebAppInterface {
         @JavascriptInterface
+        public boolean isVpnRunning() {
+            return DnsVpnService.isRunning;
+        }
+
+        @JavascriptInterface
         public void startVpn() {
             runOnUiThread(new Runnable() {
                 @Override

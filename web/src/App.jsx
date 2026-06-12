@@ -49,18 +49,25 @@ export default function App() {
     return () => clearInterval(interval)
   }, [config, logLimit])
 
+  useEffect(() => {
+    const vpnInterval = setInterval(() => {
+      if (window.Android && window.Android.isVpnRunning) {
+        setIsConnected(window.Android.isVpnRunning())
+      }
+    }, 1000)
+    return () => clearInterval(vpnInterval)
+  }, [])
+
   const toggleVpn = () => {
     if (!isConnected) {
       if (window.Android) {
         window.Android.startVpn()
-        setIsConnected(true)
       } else {
         alert("Not running inside Android App")
       }
     } else {
       if (window.Android) {
         window.Android.stopVpn()
-        setIsConnected(false)
       }
     }
   }
