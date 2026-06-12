@@ -1,0 +1,10 @@
+[
+    {
+        "merged": "com.ublockdns.app-merged_res-37:/mipmap-xxxhdpi_ic_launcher_round.png.flat",
+        "source": "com.ublockdns.app-main-39:/mipmap-xxxhdpi/ic_launcher_round.png"
+    },
+    {
+        "merged": "com.ublockdns.app-merged_res-37:/mipmap-xxxhdpi_ic_launcher.png.flat",
+        "source": "com.ublockdns.app-main-39:/mipmap-xxxhdpi/ic_launcher.png"
+    }
+]

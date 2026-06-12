@@ -43,32 +43,24 @@ func (u *Updater) Start(ctx context.Context) {
 
 	// Catch-up logic: If we never updated today (after 12:00 AM), do it now.
 	if lastUpdate.Before(todayMidnight) {
-		u.SyncMaster()
+		log.Println("Catch-up sync required. Starting SyncMaster...")
+		go u.SyncMaster()
 	}
-
-	for {
-		now = time.Now()
-		nextMidnight := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, now.Location())
-		duration := nextMidnight.Sub(now)
-
-		timer := time.NewTimer(duration)
-
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-			u.SyncMaster()
-		case <-u.ForceSync:
-			if !timer.Stop() {
-				select {
-				case <-timer.C:
-				default:
-				}
+	
+	// The infinite time.Timer loop has been removed for Android power efficiency.
+	// Android's native WorkManager will directly call SyncMaster() on a daily basis.
+	
+	// Handle ForceSync channel to keep API compatibility without the infinite loop
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-u.ForceSync:
+				u.SyncMaster()
 			}
-			u.SyncMaster()
 		}
-	}
+	}()
 }
 
 func (u *Updater) GetStatus() (lastUpdate int64, nextUpdate int64) {

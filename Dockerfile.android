@@ -1,0 +1,73 @@
+# Base image with Java 17 (Required for modern Android/Gradle)
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    curl \
+    git \
+    unzip \
+    openjdk-17-jdk \
+    build-essential \
+    npm \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Node (for building the Vite app)
+RUN npm install -g n && n 20
+
+# Install Go 1.25.11
+ENV GO_VERSION=1.25.11
+RUN wget https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz && \
+    tar -C /usr/local -xzf go${GO_VERSION}.linux-amd64.tar.gz && \
+    rm go${GO_VERSION}.linux-amd64.tar.gz
+
+ENV PATH=$PATH:/usr/local/go/bin:/root/go/bin
+ENV GOPATH=/root/go
+
+# Setup Android SDK & NDK
+ENV ANDROID_SDK_ROOT=/opt/android-sdk
+ENV ANDROID_HOME=/opt/android-sdk
+ENV ANDROID_NDK_HOME=/opt/android-sdk/ndk/25.2.9519653
+
+RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools && \
+    cd ${ANDROID_SDK_ROOT}/cmdline-tools && \
+    wget https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip && \
+    unzip cmdline-tools.zip && \
+    rm cmdline-tools.zip && \
+    mv cmdline-tools latest
+
+ENV PATH=$PATH:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools
+
+RUN yes | sdkmanager --licenses && \
+    sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+
+# Install Gomobile
+RUN go install golang.org/x/mobile/cmd/gomobile@latest && \
+    gomobile init
+
+# Install Gradle 8.4
+RUN wget https://services.gradle.org/distributions/gradle-8.4-bin.zip -O gradle.zip && \
+    unzip gradle.zip -d /opt/ && \
+    rm gradle.zip
+ENV PATH=$PATH:/opt/gradle-8.4/bin
+
+# Setup working directory
+WORKDIR /workspace
+
+# Default command to build the app
+CMD ["bash", "-c", "\
+    echo 'Building Frontend...' && \
+    cd web && npm install && npm run build && cd .. && \
+    cp -r web/dist/* internal/api/web_dist/ && \
+    echo 'Building Gomobile library...' && \
+    go get -tool golang.org/x/mobile/cmd/gobind && \
+    go get golang.org/x/mobile/bind && \
+    go mod tidy && \
+    gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar github.com/ugzv/ublockdnsclient/mobile && \
+    echo 'Building Android APK...' && \
+    cd android-app && \
+    gradle assembleDebug && \
+    cp app/build/outputs/apk/debug/app-debug.apk /workspace/ublockdns-android.apk && \
+    echo 'BUILD SUCCESSFUL! APK is at ublockdns-android.apk'"]

@@ -27,7 +27,7 @@ func Load(path string) (*Config, error) {
 		cfg.ListenAddr = "0.0.0.0:53"
 	}
 	if cfg.UpstreamDNS == "" {
-		cfg.UpstreamDNS = "1.1.1.1:53"
+		cfg.UpstreamDNS = "1.1.1.1:853,8.8.8.8:853"
 	}
 	// Sanitize custom rules
 	for i, r := range cfg.CustomRules {

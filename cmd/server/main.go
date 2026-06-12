@@ -43,7 +43,7 @@ func main() {
 
 	// Load blocklists asynchronously so UI starts immediately
 	go func() {
-		if err := server.ReloadConfig(cfg); err != nil {
+		if err := server.ReloadConfig(cfg, dataDir); err != nil {
 			log.Printf("Failed to initialize filtering engine: %v", err)
 		} else {
 			log.Println("Filtering engine initialized")
@@ -59,7 +59,7 @@ func main() {
 
 	// Start the Master Updater service
 	updaterSvc := updater.NewUpdater(dataDir, func() {
-		if err := server.ReloadConfig(cfg); err != nil {
+		if err := server.ReloadConfig(cfg, dataDir); err != nil {
 			log.Printf("Failed to reload config after master sync: %v", err)
 		} else {
 			log.Println("Successfully reloaded config after master sync")

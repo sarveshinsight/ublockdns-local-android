@@ -33,6 +33,7 @@ func InitDB(dataDir string) error {
 		log.Printf("DB PRAGMA error: %v", err)
 	}
 
+
 	// Initialize schema
 	schema := `
 	CREATE TABLE IF NOT EXISTS query_logs (
@@ -77,5 +78,6 @@ func InitDB(dataDir string) error {
 	}
 
 	log.Println("SQLite database initialized successfully.")
+
 	return nil
 }

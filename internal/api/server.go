@@ -1,9 +1,12 @@
 package api
 
 import (
+	"embed"
 	"encoding/json"
+	"io/fs"
 	"log"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,6 +16,9 @@ import (
 	"github.com/ugzv/ublockdnsclient/internal/resolver"
 	"github.com/ugzv/ublockdnsclient/internal/updater"
 )
+
+//go:embed web_dist
+var WebFS embed.FS
 
 type Server struct {
 	addr        string
@@ -61,9 +67,20 @@ func (s *Server) Start() error {
 		r.Post("/updater/force", s.handleForceUpdate)
 	})
 
-	// Serve the static frontend
-	fs := http.FileServer(http.Dir("./web/dist"))
-	r.Handle("/*", fs)
+	// Serve the static frontend using embedded filesystem
+	var staticFS http.FileSystem
+	
+	// Check if embedded filesystem is populated (for Android)
+	dir, err := WebFS.ReadDir("web_dist")
+	if err == nil && len(dir) > 0 {
+		subFS, _ := fs.Sub(WebFS, "web_dist")
+		staticFS = http.FS(subFS)
+	} else {
+		// Fallback for Desktop
+		staticFS = http.Dir("./web/dist")
+	}
+	
+	r.Handle("/*", http.FileServer(staticFS))
 
 	log.Printf("Starting API server on %s", s.addr)
 	return http.ListenAndServe(s.addr, r)
@@ -95,10 +112,17 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	// Apply upstream change instantly so user doesn't have to wait for blocklists
 	s.dnsResolver.SetUpstream(s.config.UpstreamDNS)
 
+	// Trigger updater to download any new lists
+	select {
+	case s.updater.ForceSync <- true:
+	default:
+	}
+
 	// Reload the DNS filtering engine asynchronously to prevent API timeout
 	cfgCopy := *s.config
 	go func() {
-		if err := s.dnsResolver.ReloadConfig(&cfgCopy); err != nil {
+		dataDir := filepath.Dir(s.configPath)
+		if err := s.dnsResolver.ReloadConfig(&cfgCopy, dataDir); err != nil {
 			log.Printf("Error reloading config asynchronously: %v", err)
 		}
 	}()
