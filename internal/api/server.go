@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -132,8 +133,13 @@ func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
+	limit := 50
+	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
+		limit = l
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	logs := s.dnsResolver.GetRecentQueries()
+	logs := s.dnsResolver.GetRecentQueries(limit)
 	json.NewEncoder(w).Encode(logs)
 }
 

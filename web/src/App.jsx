@@ -13,6 +13,7 @@ export default function App() {
   // Navigation State
   const [activeTab, setActiveTab] = useState('home') // home, logs, protection
   const [logFilter, setLogFilter] = useState('all') // all, allowed, blocked
+  const [logLimit, setLogLimit] = useState(50) // limit for Activity logs
   const [selectedDomain, setSelectedDomain] = useState(null)
   const [domainStats, setDomainStats] = useState(null)
 
@@ -21,7 +22,7 @@ export default function App() {
       const statsRes = await fetch('/api/stats')
       if (statsRes.ok) setStats(await statsRes.json())
 
-      const logsRes = await fetch('/api/logs')
+      const logsRes = await fetch(`/api/logs?limit=${logLimit}`)
       if (logsRes.ok) setLogs(await logsRes.json() || [])
 
       if (!config) {
@@ -46,7 +47,7 @@ export default function App() {
     fetchData()
     const interval = setInterval(fetchData, 2000)
     return () => clearInterval(interval)
-  }, [config])
+  }, [config, logLimit])
 
   const toggleVpn = () => {
     if (!isConnected) {
@@ -154,20 +155,31 @@ export default function App() {
           No queries matching filter.
         </div>
       ) : (
-        filteredLogs.slice(0, 50).map((log, i) => (
-          <div className="list-item" key={i} onClick={() => openDomainModal(log.domain)}>
-            <div className="domain-icon">
-              {log.domain.charAt(0).toUpperCase()}
+        <>
+          {filteredLogs.map((log, i) => (
+            <div className="list-item" key={i} onClick={() => openDomainModal(log.domain)}>
+              <div className="domain-icon">
+                {log.domain.charAt(0).toUpperCase()}
+              </div>
+              <div className="domain-info">
+                <span className="domain-name">{log.domain}</span>
+                <span className="domain-meta">{log.type} • {log.speed}</span>
+              </div>
+              <span className={`action-badge ${log.action === 'BLOCKED' ? 'blocked' : 'allowed'}`}>
+                {log.action}
+              </span>
             </div>
-            <div className="domain-info">
-              <span className="domain-name">{log.domain}</span>
-              <span className="domain-meta">{log.type} • {log.speed}</span>
-            </div>
-            <span className={`action-badge ${log.action === 'BLOCKED' ? 'blocked' : 'allowed'}`}>
-              {log.action}
-            </span>
-          </div>
-        ))
+          ))}
+          {logs.length >= logLimit && (
+            <button 
+              onClick={() => setLogLimit(l => l + 50)} 
+              className="btn-primary" 
+              style={{margin: '1rem auto', display: 'block', width: 'calc(100% - 3rem)', padding: '12px'}}
+            >
+              View More
+            </button>
+          )}
+        </>
       )}
     </div>
   )};

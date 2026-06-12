@@ -99,8 +99,8 @@ func (s *Server) SetUpstream(up string) {
 	s.upstream = up
 }
 
-func (s *Server) GetRecentQueries() []LogEntry {
-	rows, err := db.DB.Query("SELECT domain, type, action, speed, time, rule, list_id FROM query_logs ORDER BY id DESC LIMIT 5000")
+func (s *Server) GetRecentQueries(limit int) []LogEntry {
+	rows, err := db.DB.Query("SELECT domain, type, action, speed, time, rule, list_id FROM query_logs ORDER BY id DESC LIMIT ?", limit)
 	var logs []LogEntry
 	if err != nil {
 		return logs
