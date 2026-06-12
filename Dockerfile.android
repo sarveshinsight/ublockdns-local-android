@@ -15,7 +15,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node (for building the Vite app)
-RUN npm install -g n && n 20
+RUN npm install -g n && n 22
 
 # Install Go 1.25.11
 ENV GO_VERSION=1.25.11
