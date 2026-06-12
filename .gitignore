@@ -11,7 +11,5 @@ history.json
 *.txt
 data/
 android-app/app/build/
-internal/api/web_dist/*
-!internal/api/web_dist/index.html
 *.apk
 *.aar
