@@ -1,6 +1,7 @@
 package resolver
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"strings"
@@ -14,11 +15,12 @@ import (
 )
 
 type Server struct {
-	addr     string
-	upstream string
-	engine   *filtering.Engine
-	client   *dns.Client
-	mu       sync.RWMutex
+	addr      string
+	upstream  string
+	engine    *filtering.Engine
+	udpClient *dns.Client
+	tlsClient *dns.Client
+	mu        sync.RWMutex
 	logQueue chan LogEntry
 }
 
@@ -43,8 +45,12 @@ func NewServer(addr string, upstream string, engine *filtering.Engine) *Server {
 		upstream: upstream,
 		engine:   engine,
 		logQueue: make(chan LogEntry, 10000), // Buffer up to 10k logs
-		client: &dns.Client{
+		udpClient: &dns.Client{
 			Net:     "udp4", // Force IPv4
+			Timeout: 5 * time.Second,
+		},
+		tlsClient: &dns.Client{
+			Net:     "tcp-tls",
 			Timeout: 5 * time.Second,
 		},
 	}
@@ -111,7 +117,10 @@ func (s *Server) GetRecentQueries(limit int) []LogEntry {
 		var t string
 		var rule sql.NullString
 		var listID sql.NullInt64
-		rows.Scan(&l.Domain, &l.Type, &l.Action, &l.Speed, &t, &rule, &listID)
+		if err := rows.Scan(&l.Domain, &l.Type, &l.Action, &l.Speed, &t, &rule, &listID); err != nil {
+			log.Printf("scan error: %v", err)
+			continue
+		}
 		l.Seen = t
 		if rule.Valid {
 			l.Rule = rule.String
@@ -119,14 +128,17 @@ func (s *Server) GetRecentQueries(limit int) []LogEntry {
 		if listID.Valid {
 			l.ListID = int(listID.Int64)
 		}
+		l.Domain = db.DecryptDomain(l.Domain)
 		logs = append(logs, l)
 	}
 	return logs
 }
 
-func (s *Server) GetStats() map[string]interface{} {
+func (s *Server) GetStats(hours int) map[string]interface{} {
 	var totalQ, totalB int
-	db.DB.QueryRow("SELECT COALESCE(SUM(count), 0), COALESCE(SUM(blocked_count), 0) FROM domain_history").Scan(&totalQ, &totalB)
+	if err := db.DB.QueryRow("SELECT COALESCE(SUM(count), 0), COALESCE(SUM(blocked_count), 0) FROM domain_history").Scan(&totalQ, &totalB); err != nil {
+		log.Printf("scan error: %v", err)
+	}
 
 	blockRate := 0.0
 	if totalQ > 0 {
@@ -139,7 +151,11 @@ func (s *Server) GetStats() map[string]interface{} {
 		defer rowsQ.Close()
 		for rowsQ.Next() {
 			var dc DomainCount
-			rowsQ.Scan(&dc.Domain, &dc.Count)
+			if err := rowsQ.Scan(&dc.Domain, &dc.Count); err != nil {
+				log.Printf("scan error: %v", err)
+				continue
+			}
+			dc.Domain = db.DecryptDomain(dc.Domain)
 			topQ = append(topQ, dc)
 		}
 	}
@@ -150,19 +166,31 @@ func (s *Server) GetStats() map[string]interface{} {
 		defer rowsB.Close()
 		for rowsB.Next() {
 			var dc DomainCount
-			rowsB.Scan(&dc.Domain, &dc.Count)
+			if err := rowsB.Scan(&dc.Domain, &dc.Count); err != nil {
+				log.Printf("scan error: %v", err)
+				continue
+			}
+			dc.Domain = db.DecryptDomain(dc.Domain)
 			topB = append(topB, dc)
 		}
 	}
 
+	minBucket := int64(0)
+	if hours > 0 {
+		minBucket = time.Now().Add(time.Duration(-hours) * time.Hour).Unix()
+	}
+
 	histArr := []map[string]interface{}{}
-	rowsH, _ := db.DB.Query("SELECT bucket, queries, blocked FROM time_history ORDER BY bucket ASC")
+	rowsH, _ := db.DB.Query("SELECT bucket, queries, blocked FROM time_history WHERE bucket >= ? ORDER BY bucket ASC", minBucket)
 	if rowsH != nil {
 		defer rowsH.Close()
 		for rowsH.Next() {
 			var bucket int64
 			var q, b int
-			rowsH.Scan(&bucket, &q, &b)
+			if err := rowsH.Scan(&bucket, &q, &b); err != nil {
+				log.Printf("scan error: %v", err)
+				continue
+			}
 			histArr = append(histArr, map[string]interface{}{
 				"timestamp": bucket,
 				"queries":   q,
@@ -183,7 +211,11 @@ func (s *Server) GetStats() map[string]interface{} {
 
 func (s *Server) GetDomainStats(domain string) map[string]interface{} {
 	var totalQ, totalB int
-	db.DB.QueryRow("SELECT count, blocked_count FROM domain_history WHERE domain = ?", domain).Scan(&totalQ, &totalB)
+	encDomain := db.EncryptDomain(domain)
+	err := db.DB.QueryRow("SELECT count, blocked_count FROM domain_history WHERE domain = ?", encDomain).Scan(&totalQ, &totalB)
+	if err != nil && err != sql.ErrNoRows {
+		log.Printf("scan error: %v", err)
+	}
 
 	s.mu.RLock()
 	eng := s.engine
@@ -287,7 +319,8 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 		}
 	}
 	if len(validUpstreams) == 0 {
-		validUpstreams = []string{"1.1.1.1:53"}
+		log.Printf("WARNING: all configured upstreams failed or empty, using TLS fallback")
+		validUpstreams = []string{"1.1.1.1:853"}
 	}
 
 	type result struct {
@@ -295,18 +328,19 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 		err  error
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	resc := make(chan result, len(validUpstreams))
 	for _, u := range validUpstreams {
 		go func(addr string) {
-			netType := "udp4"
+			var res *dns.Msg
+			var err error
 			if strings.HasSuffix(addr, ":853") {
-				netType = "tcp-tls"
+				res, _, err = s.tlsClient.ExchangeContext(ctx, r.Copy(), addr)
+			} else {
+				res, _, err = s.udpClient.ExchangeContext(ctx, r.Copy(), addr)
 			}
-			client := &dns.Client{
-				Net:     netType,
-				Timeout: 5 * time.Second,
-			}
-			res, _, err := client.Exchange(r.Copy(), addr)
 			resc <- result{res, err}
 		}(u)
 	}
@@ -318,6 +352,7 @@ func (s *Server) ProcessDNSMsg(r *dns.Msg) *dns.Msg {
 		if res.err == nil && res.resp != nil {
 			resp = res.resp
 			err = nil
+			cancel() // Cancel remaining requests
 			break
 		}
 		err = res.err
@@ -343,7 +378,7 @@ func (s *Server) handleRequest(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func (s *Server) startLogFlusher() {
-	ticker := time.NewTicker(500 * time.Millisecond)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	var batch []LogEntry
@@ -360,10 +395,6 @@ func (s *Server) startLogFlusher() {
 
 		tx, err := db.DB.Begin()
 		if err != nil {
-			// Restore batch so we don't lose logs during DB locks (e.g. rebuilds)
-			s.mu.Lock()
-			batch = append(currentBatch, batch...)
-			s.mu.Unlock()
 			return
 		}
 
@@ -372,25 +403,27 @@ func (s *Server) startLogFlusher() {
 		tStmt, _ := tx.Prepare(`INSERT INTO time_history (bucket, queries, blocked) VALUES (?, 1, ?) ON CONFLICT(bucket) DO UPDATE SET queries = queries + 1, blocked = blocked + ?`)
 		dtStmt, _ := tx.Prepare(`INSERT INTO domain_time_history (domain, bucket, queries, blocked) VALUES (?, ?, 1, ?) ON CONFLICT(domain, bucket) DO UPDATE SET queries = queries + 1, blocked = blocked + ?`)
 
+		bucket := time.Now().Truncate(5 * time.Minute).Unix()
 		for _, l := range currentBatch {
 			b := 0
 			if l.Action == "BLOCKED" {
 				b = 1
 			}
 
+			encDomain := db.EncryptDomain(l.Domain)
+
 			if qStmt != nil {
-				qStmt.Exec(l.Domain, l.Type, l.Action, l.Speed, l.Rule, l.ListID)
+				qStmt.Exec(encDomain, l.Type, l.Action, l.Speed, l.Rule, l.ListID)
 			}
 			if dStmt != nil {
-				dStmt.Exec(l.Domain, b, b)
+				dStmt.Exec(encDomain, b, b)
 			}
 
-			bucket := time.Now().Truncate(5 * time.Minute).Unix()
 			if tStmt != nil {
 				tStmt.Exec(bucket, b, b)
 			}
 			if dtStmt != nil {
-				dtStmt.Exec(l.Domain, bucket, b, b)
+				dtStmt.Exec(encDomain, bucket, b, b)
 			}
 		}
 
@@ -408,7 +441,10 @@ func (s *Server) startLogFlusher() {
 		}
 
 		// Cleanup old logs
-		tx.Exec("DELETE FROM query_logs WHERE id < (SELECT MAX(id) FROM query_logs) - 10000")
+		tx.Exec("DELETE FROM query_logs WHERE time < datetime('now', '-24 hours')")
+		thirtyDaysAgo := time.Now().Add(-30 * 24 * time.Hour).Unix()
+		tx.Exec("DELETE FROM time_history WHERE bucket < ?", thirtyDaysAgo)
+		tx.Exec("DELETE FROM domain_time_history WHERE bucket < ?", thirtyDaysAgo)
 		tx.Commit()
 	}
 

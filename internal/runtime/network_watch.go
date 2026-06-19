@@ -1,3 +1,6 @@
+//go:build !android
+// +build !android
+
 // Network interface polling derived from github.com/nextdns/nextdns/netstatus.
 // Kept instance-local (one goroutine per activation context) to avoid the global
 // Notify/Stop singleton that races under go test -race.

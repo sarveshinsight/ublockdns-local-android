@@ -3,11 +3,13 @@ package api
 import (
 	"embed"
 	"encoding/json"
+	"io"
 	"io/fs"
 	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -95,7 +97,7 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleUpdateConfig(w http.ResponseWriter, r *http.Request) {
 	var newCfg config.Config
-	if err := json.NewDecoder(r.Body).Decode(&newCfg); err != nil {
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&newCfg); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -138,6 +140,9 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 	if l, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && l > 0 {
 		limit = l
 	}
+	if limit > 500 {
+		limit = 500
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	logs := s.dnsResolver.GetRecentQueries(limit)
@@ -146,7 +151,17 @@ func (s *Server) handleGetLogs(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetStats(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	stats := s.dnsResolver.GetStats()
+	hours := 24
+	if h := r.URL.Query().Get("hours"); h != "" {
+		if val, err := strconv.Atoi(h); err == nil {
+			hours = val
+		}
+	} else if h := r.URL.Query().Get("range"); h != "" {
+		if val, err := strconv.Atoi(strings.TrimSuffix(h, "h")); err == nil {
+			hours = val
+		}
+	}
+	stats := s.dnsResolver.GetStats(hours)
 	json.NewEncoder(w).Encode(stats)
 }
 

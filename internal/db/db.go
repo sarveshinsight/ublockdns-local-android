@@ -26,7 +26,7 @@ func InitDB(dataDir string) error {
 		PRAGMA journal_mode = WAL;
 		PRAGMA synchronous = NORMAL;
 		PRAGMA busy_timeout = 5000;
-		PRAGMA cache_size = -20000; -- 20MB cache
+		PRAGMA cache_size = -4000; -- 4MB cache
 		PRAGMA foreign_keys = ON;
 	`)
 	if err != nil {

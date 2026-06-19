@@ -1,13 +1,22 @@
 package com.ublockdns.app;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.Intent;
 import android.net.VpnService;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.util.Log;
+import androidx.core.app.NotificationCompat;
 
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import mobile.Mobile;
 
@@ -16,16 +25,41 @@ public class DnsVpnService extends VpnService {
 
     private VpnWorker mWorker;
     private Thread mThread;
+    private Handler mHandler;
+    private Runnable mNotificationUpdater;
 
     // Static reference so MainActivity can directly call disconnect
     private static DnsVpnService sInstance;
-    public static volatile boolean isRunning = false;
+    public static final AtomicBoolean isRunning = new AtomicBoolean(false);
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         Log.i(TAG, "onStartCommand called");
+        if (intent != null && "ACTION_DISCONNECT".equals(intent.getAction())) {
+            disconnect();
+            return START_NOT_STICKY;
+        }
+
         sInstance = this;
-        isRunning = true;
+        isRunning.set(true);
+
+        createNotificationChannel();
+        
+        updateNotification();
+
+        if (mHandler == null) {
+            mHandler = new Handler(Looper.getMainLooper());
+            mNotificationUpdater = new Runnable() {
+                @Override
+                public void run() {
+                    updateNotification();
+                    if (isRunning.get()) {
+                        mHandler.postDelayed(this, 5 * 60 * 1000);
+                    }
+                }
+            };
+            mHandler.postDelayed(mNotificationUpdater, 5 * 60 * 1000);
+        }
 
         // Clean up any existing worker/thread completely before starting a new one
         stopActiveWorker();
@@ -36,6 +70,47 @@ public class DnsVpnService extends VpnService {
         mThread.start();
 
         return START_STICKY;
+    }
+
+    private void updateNotification() {
+        Intent activityIntent = new Intent(this, MainActivity.class);
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, activityIntent, PendingIntent.FLAG_IMMUTABLE);
+        
+        Intent disconnectIntent = new Intent(this, DnsVpnService.class);
+        disconnectIntent.setAction("ACTION_DISCONNECT");
+        PendingIntent pDisconnectIntent = PendingIntent.getService(this, 0, disconnectIntent, PendingIntent.FLAG_IMMUTABLE);
+        
+        String notifText = Mobile.getNotificationText();
+
+        Notification notification = new NotificationCompat.Builder(this, "VPN_CHANNEL_ID")
+                .setContentTitle("UblockDNS Protection")
+                .setContentText(notifText)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(notifText))
+                .setSmallIcon(R.mipmap.ic_launcher)
+                .setContentIntent(pendingIntent)
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Disconnect", pDisconnectIntent)
+                .setOnlyAlertOnce(true)
+                .build();
+
+        NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.notify(1, notification);
+        }
+        startForeground(1, notification);
+    }
+
+    private void createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel serviceChannel = new NotificationChannel(
+                    "VPN_CHANNEL_ID",
+                    "VPN Service Channel",
+                    NotificationManager.IMPORTANCE_LOW
+            );
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager != null) {
+                manager.createNotificationChannel(serviceChannel);
+            }
+        }
     }
 
     private void stopActiveWorker() {
@@ -59,7 +134,12 @@ public class DnsVpnService extends VpnService {
      */
     public void disconnect() {
         Log.i(TAG, "disconnect() called");
-        isRunning = false;
+        isRunning.set(false);
+
+        if (mHandler != null && mNotificationUpdater != null) {
+            mHandler.removeCallbacks(mNotificationUpdater);
+            mHandler = null;
+        }
 
         stopActiveWorker();
 
@@ -72,7 +152,7 @@ public class DnsVpnService extends VpnService {
      */
     public static void requestDisconnect() {
         Log.i(TAG, "requestDisconnect() called, sInstance=" + sInstance);
-        isRunning = false;
+        isRunning.set(false);
         if (sInstance != null) {
             sInstance.disconnect();
         }
@@ -81,7 +161,7 @@ public class DnsVpnService extends VpnService {
     @Override
     public void onDestroy() {
         Log.i(TAG, "onDestroy() called");
-        isRunning = false;
+        isRunning.set(false);
         stopActiveWorker();
         sInstance = null;
         super.onDestroy();
@@ -115,22 +195,19 @@ public class DnsVpnService extends VpnService {
                 mLocalInterface = configure();
                 if (mLocalInterface == null) {
                     Log.e(TAG, "Failed to establish VPN interface");
-                    if (mWorker == this) isRunning = false;
+                    if (mWorker == this) isRunning.set(false);
                     return;
                 }
 
                 FileInputStream in = new FileInputStream(mLocalInterface.getFileDescriptor());
                 FileOutputStream out = new FileOutputStream(mLocalInterface.getFileDescriptor());
 
-                byte[] packet = new byte[32767];
+                byte[] packet = new byte[2048];
 
                 while (!Thread.currentThread().isInterrupted() && !mStopping) {
                     int length = in.read(packet);
                     if (length > 0) {
-                        byte[] requestBytes = new byte[length];
-                        System.arraycopy(packet, 0, requestBytes, 0, length);
-
-                        byte[] responseBytes = Mobile.processPacket(requestBytes);
+                        byte[] responseBytes = Mobile.processPacket(packet, length);
 
                         if (responseBytes != null && responseBytes.length > 0) {
                             out.write(responseBytes);
@@ -148,7 +225,7 @@ public class DnsVpnService extends VpnService {
                 stop();
                 // Only update global state if this is still the active worker
                 if (mWorker == this && !mStopping) {
-                    isRunning = false;
+                    isRunning.set(false);
                 }
             }
         }

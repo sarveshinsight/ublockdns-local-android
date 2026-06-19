@@ -2,7 +2,7 @@ package filtering
 
 import (
 	"bufio"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -46,15 +46,15 @@ func RouteActiveLists(dataDir string, activeURLs []string, allURLs []string) ([]
 	var activePaths []string
 
 	for _, u := range allURLs {
-		hash := fmt.Sprintf("%x", md5.Sum([]byte(u)))
-		masterPath := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash))
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(u)))
+		masterPath := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash[:16]))
 
 		if _, err := os.Stat(masterPath); os.IsNotExist(err) {
 			continue
 		}
 
 		if activeMap[u] {
-			activePath := filepath.Join(activeDir, fmt.Sprintf("list_%s.txt", hash))
+			activePath := filepath.Join(activeDir, fmt.Sprintf("list_%s.txt", hash[:16]))
 			copyFile(masterPath, activePath)
 			activePaths = append(activePaths, activePath)
 		} else {
@@ -143,7 +143,7 @@ func NewEngine(listPaths []string, customRules []string, dataDir string) (*Engin
 	// Check if we can use the cached SQLite database and binary bloom filter
 	db.DB.Exec("CREATE TABLE IF NOT EXISTS app_state (key TEXT PRIMARY KEY, value TEXT)")
 	
-	pathsHash := fmt.Sprintf("%x", md5.Sum([]byte(strings.Join(listPaths, ","))))
+	pathsHash := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(listPaths, ","))))
 	var lastHash string
 	db.DB.QueryRow("SELECT value FROM app_state WHERE key = 'last_parsed_hash_v2'").Scan(&lastHash)
 
@@ -265,6 +265,9 @@ func (e *Engine) Check(domain string, qtype uint16) (bool, string, int) {
 	if e.customEngine != nil {
 		res, matched := e.customEngine.Match(domain)
 		if matched && res.NetworkRule != nil {
+			if res.NetworkRule.Whitelist {
+				return false, "", 0
+			}
 			return true, res.NetworkRule.Text(), 9999
 		}
 	}

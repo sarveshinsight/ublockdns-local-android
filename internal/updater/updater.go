@@ -2,7 +2,7 @@ package updater
 
 import (
 	"context"
-	"crypto/md5"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ugzv/ublockdnsclient/internal/config"
@@ -20,6 +21,7 @@ type Updater struct {
 	dataDir        string
 	onSyncComplete func()
 	ForceSync      chan bool
+	syncMu         sync.Mutex
 }
 
 func NewUpdater(dataDir string, onSyncComplete func()) *Updater {
@@ -74,6 +76,12 @@ func (u *Updater) GetStatus() (lastUpdate int64, nextUpdate int64) {
 }
 
 func (u *Updater) SyncMaster() {
+	if !u.syncMu.TryLock() {
+		log.Println("Updater: sync already in progress, skipping")
+		return
+	}
+	defer u.syncMu.Unlock()
+
 	masterDir := filepath.Join(u.dataDir, "master")
 	if err := os.MkdirAll(masterDir, 0755); err != nil {
 		log.Printf("Updater: failed to create master dir: %v", err)
@@ -84,8 +92,8 @@ func (u *Updater) SyncMaster() {
 	client := &http.Client{Timeout: 30 * time.Second}
 
 	for i, list := range config.Catalog {
-		hash := fmt.Sprintf("%x", md5.Sum([]byte(list.URL)))
-		filename := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash))
+		hash := fmt.Sprintf("%x", sha256.Sum256([]byte(list.URL)))
+		filename := filepath.Join(masterDir, fmt.Sprintf("list_%s.txt", hash[:16]))
 
 		info, err := os.Stat(filename)
 		if err == nil && info.Size() > 0 && time.Since(info.ModTime()) < 24*time.Hour {

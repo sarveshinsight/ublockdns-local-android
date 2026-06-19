@@ -2,8 +2,10 @@ package mobile
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"path/filepath"
+	"sync"
 
 	"github.com/miekg/dns"
 	"github.com/ugzv/ublockdnsclient/internal/api"
@@ -40,6 +42,7 @@ func Start(dataDir string) {
 	}
 
 	db.InitDB(dataDir)
+	db.InitEncryption(dataDir)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancelFunc = cancel
@@ -95,16 +98,25 @@ func SyncMaster() {
 	}
 }
 
+var bufPool = sync.Pool{
+	New: func() interface{} {
+		b := make([]byte, 2048)
+		return &b
+	},
+}
+
 // ProcessPacket takes a raw IPv4 packet from Android's TUN interface,
 // parses the UDP payload as a DNS query, processes it, and returns a crafted IPv4 response.
 // Returns nil if the packet is not a valid IPv4/UDP DNS packet.
-func ProcessPacket(packet []byte) []byte {
-	if GlobalServer == nil || len(packet) < 28 {
+func ProcessPacket(packet []byte, length int) []byte {
+	if GlobalServer == nil || length < 28 || length > len(packet) {
 		return nil
 	}
 
+	packetData := packet[:length]
+
 	// Basic IPv4 parsing
-	versionIhl := packet[0]
+	versionIhl := packetData[0]
 	version := versionIhl >> 4
 	if version != 4 {
 		return nil // Only IPv4 supported
@@ -112,23 +124,23 @@ func ProcessPacket(packet []byte) []byte {
 	ihl := int(versionIhl & 0x0F)
 	ipHeaderLen := ihl * 4
 
-	if len(packet) < ipHeaderLen+8 {
+	if length < ipHeaderLen+8 {
 		return nil
 	}
 
-	protocol := packet[9]
+	protocol := packetData[9]
 	if protocol != 17 { // 17 = UDP
 		return nil
 	}
 
 	// Swap Source and Destination IPs for the response
-	srcIP := packet[12:16]
-	dstIP := packet[16:20]
+	srcIP := packetData[12:16]
+	dstIP := packetData[16:20]
 
 	// Parse UDP Header
 	udpHeaderStart := ipHeaderLen
-	srcPort := packet[udpHeaderStart : udpHeaderStart+2]
-	dstPort := packet[udpHeaderStart+2 : udpHeaderStart+4]
+	srcPort := packetData[udpHeaderStart : udpHeaderStart+2]
+	dstPort := packetData[udpHeaderStart+2 : udpHeaderStart+4]
 
 	// Port 53 check (only process DNS queries)
 	if dstPort[0] != 0 || dstPort[1] != 53 {
@@ -136,7 +148,7 @@ func ProcessPacket(packet []byte) []byte {
 	}
 
 	udpPayloadStart := udpHeaderStart + 8
-	dnsQueryBytes := packet[udpPayloadStart:]
+	dnsQueryBytes := packetData[udpPayloadStart:]
 
 	// Parse DNS Message
 	req := new(dns.Msg)
@@ -151,7 +163,11 @@ func ProcessPacket(packet []byte) []byte {
 	}
 
 	// Pack DNS Response
-	respBytes, err := resp.Pack()
+	bufPtr := bufPool.Get().(*[]byte)
+	defer bufPool.Put(bufPtr)
+	buf := (*bufPtr)[:0] // reset length to 0
+
+	respBytes, err := resp.PackBuffer(buf)
 	if err != nil {
 		return nil
 	}
@@ -161,7 +177,7 @@ func ProcessPacket(packet []byte) []byte {
 	respPacket := make([]byte, respPacketLen)
 
 	// Copy original IP header
-	copy(respPacket, packet[:ipHeaderLen])
+	copy(respPacket, packetData[:ipHeaderLen])
 
 	// Set Total Length
 	respPacket[2] = byte(respPacketLen >> 8)
@@ -202,4 +218,29 @@ func ProcessPacket(packet []byte) []byte {
 	copy(respPacket[ipHeaderLen+8:], respBytes)
 
 	return respPacket
+}
+
+func GetNotificationText() string {
+	if GlobalServer == nil {
+		return "Starting..."
+	}
+	stats := GlobalServer.GetStats(24)
+	total := stats["total_queries"].(int)
+	blocked := stats["blocked"].(int)
+	
+	txt := ""
+	if total == 0 {
+		txt = "Blocking trackers and ads locally"
+	} else {
+		txt = fmt.Sprintf("%d Queries | %d Blocked", total, blocked)
+		if topB, ok := stats["top_blocked"].([]resolver.DomainCount); ok && len(topB) > 0 {
+			txt += "\nBlocked: "
+			for i, v := range topB {
+				if i > 0 { txt += ", " }
+				txt += v.Domain
+				if i >= 2 { break }
+			}
+		}
+	}
+	return txt
 }
