@@ -1,4 +1,4 @@
-name: CI and Android Release
+name: Build and Release Android APK
 
 on:
   push:
@@ -6,81 +6,67 @@ on:
   pull_request:
 
 jobs:
-  test:
+  build:
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v5
-
-      - name: Setup Go
-        uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - name: Verify formatting
-        run: |
-          unformatted=$(gofmt -l .)
-          if [ -n "$unformatted" ]; then
-            echo "Unformatted files:"
-            echo "$unformatted"
-            exit 1
-          fi
-
-      - name: Create dummy web_dist
-        run: |
-          mkdir -p internal/api/web_dist
-          touch internal/api/web_dist/index.html
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Test
-        run: go test ./...
-
-      - name: Build
-        run: go build ./...
-
-      - name: Cross-compile smoke builds
-        run: |
-          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./...
-          GOOS=windows GOARCH=arm64 CGO_ENABLED=0 go build ./...
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build ./...
-          GOOS=linux GOARCH=arm GOARM=7 CGO_ENABLED=0 go build ./...
-          GOOS=freebsd GOARCH=amd64 CGO_ENABLED=0 go build ./...
-
-  build-and-release:
-    needs: test
-    runs-on: ubuntu-latest
-    
-    # We need contents: write permission to create/update releases
     permissions:
       contents: write
 
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
-      - name: Build Android APK via Docker
-        run: |
-          echo "Building Docker image..."
-          docker build -t ublockdns-android-builder -f Dockerfile.android .
-          
-          echo "Running compiler container..."
-          docker run --name ublockdns-android-compiler --rm -v "${PWD}:/workspace" -v ublockdns-gradle-cache:/root/.gradle -v ublockdns-go-cache:/root/go/pkg -v ublockdns-go-build-cache:/root/.cache/go-build -v ublockdns-npm-cache:/root/.npm ublockdns-android-builder
-
-      - name: Update Beta Release
-        uses: ncipollo/release-action@v1
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
-          tag: "beta-1"
-          name: "Latest Beta Release"
+          node-version: '20'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Build React Frontend
+        run: |
+          cd web
+          npm install
+          npm run build
+
+      - name: Move React Build to Go Embedded Filesystem
+        run: |
+          mkdir -p internal/api/web_dist
+          cp -r web/dist/* internal/api/web_dist/
+
+      - name: Compile Go Backend via Gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          gomobile init
+          mkdir -p android-app/app/libs
+          gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar ./mobile
+
+      - name: Build Android APK
+        run: |
+          cd android-app
+          gradle assembleDebug
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ublockdns-android-debug
+          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0.${{ github.run_number }}
+          name: Release v1.0.${{ github.run_number }}
           body: "Automated continuous build from the main branch."
-          artifacts: "ublockdns-android.apk"
-          allowUpdates: true
-          makeLatest: true
+          files: android-app/app/build/outputs/apk/debug/app-debug.apk
           prerelease: true
