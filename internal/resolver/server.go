@@ -199,13 +199,32 @@ func (s *Server) GetStats(hours int) map[string]interface{} {
 		}
 	}
 
+	// Query type distribution for analytics
+	typeStats := []map[string]interface{}{}
+	rowsT, _ := db.DB.Query("SELECT type, COUNT(*) as cnt FROM query_logs GROUP BY type ORDER BY cnt DESC LIMIT 10")
+	if rowsT != nil {
+		defer rowsT.Close()
+		for rowsT.Next() {
+			var qtype string
+			var cnt int
+			if err := rowsT.Scan(&qtype, &cnt); err != nil {
+				continue
+			}
+			typeStats = append(typeStats, map[string]interface{}{
+				"type":  qtype,
+				"count": cnt,
+			})
+		}
+	}
+
 	return map[string]interface{}{
-		"total_queries": totalQ,
-		"blocked":       totalB,
-		"block_rate":    blockRate,
-		"top_queried":   topQ,
-		"top_blocked":   topB,
-		"history":       histArr,
+		"total_queries":    totalQ,
+		"blocked":          totalB,
+		"block_rate":       blockRate,
+		"top_queried":      topQ,
+		"top_blocked":      topB,
+		"history":          histArr,
+		"query_type_stats": typeStats,
 	}
 }
 

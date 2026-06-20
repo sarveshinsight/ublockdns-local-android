@@ -70,7 +70,7 @@ func main() {
 	go updaterSvc.Start(context.Background())
 
 	// Start API server in background
-	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath, updaterSvc)
+	apiServer := api.NewServer("0.0.0.0:8080", cfg, server, configPath, updaterSvc, "1.0")
 	go func() {
 		if err := apiServer.Start(); err != nil {
 			log.Fatalf("API server failed: %v", err)

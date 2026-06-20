@@ -17,6 +17,18 @@ import androidx.work.WorkManager;
 import androidx.work.Constraints;
 import androidx.work.NetworkType;
 
+import android.content.pm.PackageManager;
+import android.os.Build;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+import androidx.core.content.FileProvider;
+import android.net.Uri;
+import android.os.Environment;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.concurrent.TimeUnit;
 
 import mobile.Mobile;
@@ -33,6 +45,13 @@ public class MainActivity extends AppCompatActivity {
         // Hide ActionBar
         if (getSupportActionBar() != null) {
             getSupportActionBar().hide();
+        }
+
+        // Request Notification Permission
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(this, android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                ActivityCompat.requestPermissions(this, new String[]{android.Manifest.permission.POST_NOTIFICATIONS}, 101);
+            }
         }
 
         // Initialize Go Backend
@@ -122,6 +141,49 @@ public class MainActivity extends AppCompatActivity {
                     stopService(intent);
                 }
             });
+        }
+
+        @JavascriptInterface
+        public String getAppVersion() {
+            return "1.0"; // Should match build.gradle versionName
+        }
+
+        @JavascriptInterface
+        public void downloadAndInstallUpdate(final String downloadUrl) {
+            new Thread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        URL url = new URL(downloadUrl);
+                        HttpURLConnection c = (HttpURLConnection) url.openConnection();
+                        c.setRequestMethod("GET");
+                        c.connect();
+
+                        String apkName = "ublockdns-update.apk";
+                        File file = new File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), apkName);
+                        FileOutputStream fos = new FileOutputStream(file);
+                        InputStream is = c.getInputStream();
+
+                        byte[] buffer = new byte[1024];
+                        int len1 = 0;
+                        while ((len1 = is.read(buffer)) != -1) {
+                            fos.write(buffer, 0, len1);
+                        }
+                        fos.close();
+                        is.close();
+
+                        Intent intent = new Intent(Intent.ACTION_VIEW);
+                        Uri apkUri = FileProvider.getUriForFile(MainActivity.this, getApplicationContext().getPackageName() + ".provider", file);
+                        intent.setDataAndType(apkUri, "application/vnd.android.package-archive");
+                        intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                        startActivity(intent);
+
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
+                }
+            }).start();
         }
     }
 

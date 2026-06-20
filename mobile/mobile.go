@@ -72,7 +72,7 @@ func Start(dataDir string) {
 
 	// Start the web UI API server
 	go func() {
-		apiServer := api.NewServer("127.0.0.1:8080", cfg, GlobalServer, filepath.Join(dataDir, "config.yaml"), GlobalUpdater)
+		apiServer := api.NewServer("127.0.0.1:8080", cfg, GlobalServer, filepath.Join(dataDir, "config.yaml"), GlobalUpdater, "1.0")
 		apiServer.Start()
 	}()
 

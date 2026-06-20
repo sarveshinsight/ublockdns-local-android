@@ -30,15 +30,17 @@ type Server struct {
 	dnsResolver *resolver.Server
 	configPath  string
 	updater     *updater.Updater
+	appVersion  string
 }
 
-func NewServer(addr string, cfg *config.Config, dnsResolver *resolver.Server, configPath string, updater *updater.Updater) *Server {
+func NewServer(addr string, cfg *config.Config, dnsResolver *resolver.Server, configPath string, upd *updater.Updater, appVersion string) *Server {
 	return &Server{
 		addr:        addr,
 		config:      cfg,
 		dnsResolver: dnsResolver,
 		configPath:  configPath,
-		updater:     updater,
+		updater:     upd,
+		appVersion:  appVersion,
 	}
 }
 
@@ -69,6 +71,7 @@ func (s *Server) Start() error {
 		r.Get("/catalog", s.handleGetCatalog)
 		r.Get("/updater/status", s.handleGetUpdaterStatus)
 		r.Post("/updater/force", s.handleForceUpdate)
+		r.Get("/app/check-update", s.handleCheckAppUpdate)
 	})
 
 	// Serve the static frontend using embedded filesystem
@@ -200,3 +203,24 @@ func (s *Server) handleForceUpdate(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]string{"status": "Update triggered"})
 }
+
+func (s *Server) handleCheckAppUpdate(w http.ResponseWriter, r *http.Request) {
+	ver := s.appVersion
+	if v := r.URL.Query().Get("current_version"); v != "" {
+		ver = v
+	}
+	update, err := updater.CheckForUpdate(ver)
+	if err != nil {
+		log.Printf("App update check failed: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"available":       false,
+			"current_version": ver,
+			"error":           err.Error(),
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(update)
+}
+
