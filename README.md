@@ -1,74 +1,69 @@
-# Local UblockDNS
+# uBlockDNS for Android
 
-This is a **completely local**, self-hosted version of UblockDNS. It brings DNS-level ad and tracker blocking to your entire device using community-maintained filter lists, but unlike the cloud version, **all DNS resolution and blocklist parsing happens entirely on your own machine**.
+**uBlockDNS** is a completely local, self-hosted DNS ad-blocker designed directly for Android. It brings network-wide DNS-level ad and tracker blocking to your phone, but unlike cloud-based DNS providers, **all DNS resolution and blocklist parsing happens entirely on your own device**.
 
-It features a built-in React-based dashboard that replicates the UblockDNS cloud dashboard, allowing you to view real-time traffic, configure blocklists, and manage custom rules.
+It features a built-in React-based dashboard (styled with a beautiful OLED Dark Mode design) that replicates premium cloud dashboards, allowing you to view real-time traffic, configure blocklists, and manage custom rules right from your phone.
 
 ## Highlights
-- **100% Local**: No DNS queries are sent to external UblockDNS servers.
-- **Dockerized**: The entire stack (Go DNS server + React UI) is bundled into a single lightweight Docker container.
-- **Modern Dashboard**: Sleek, dark-mode dashboard with real-time stats and query logs.
-- **Timeseries Analytics**: Real-time traffic graph with adjustable timeframes (Past Hour to Past Month) and leaderboards for Top Queried and Top Blocked domains.
-- **Customizable & Live**: Add/remove blocklists and update Upstream DNS settings via the UI without restarting.
-- **Auto-Syncing**: Active blocklists are automatically re-downloaded and synced every 24 hours.
-- **Native Windows Integration**: Includes native proxy scripts to safely bypass Docker's port restrictions and instantly toggle system DNS.
+- **100% Local Privacy**: No DNS queries are sent to external UblockDNS servers for filtering. Your privacy stays on your device.
+- **Android VPN Service**: Uses a native Android VpnService to seamlessly route all your phone's DNS traffic to the local Go-based resolver. No root required!
+- **Gomobile Backend**: The high-performance Go DNS server runs natively inside the Android app using Gomobile bindings.
+- **Modern Dashboard**: Sleek, OLED dark-mode dashboard with real-time stats and query logs embedded in a WebView.
+- **Data Science Analytics**: Includes beautiful interactive charts for Query Volume over time, Cumulative Queries, Block Rate Trends, and Query Type Distribution.
+- **Auto-Updater**: Built-in background worker automatically checks for new APK updates from GitHub and notifies you when a new version is available for 1-tap installation.
+- **Auto-Syncing**: Active blocklists are automatically re-downloaded and synced in the background using Android WorkManager.
 
-## Prerequisites
-- Docker / Docker Desktop
+## How it Works
+1. **The Backend**: The app bundles a lightweight Go (Golang) server compiled to a native Android library via `gomobile`. This backend runs an embedded HTTP API and a UDP DNS resolver.
+2. **The Intercept**: When you tap "Connect", Android establishes a local loopback VPN. It intercepts all outbound port 53 (DNS) traffic and forwards it to the embedded Go DNS resolver.
+3. **The Filtering**: The Go resolver checks domains against your active blocklists and custom rules. Blocked domains are returned as `0.0.0.0`, while allowed domains are forwarded to your chosen upstream DNS (like Cloudflare or Quad9).
+4. **The UI**: The beautiful dashboard you see is a React JS application. It is compiled to static files and served directly by the Go backend on `localhost:8080`, rendering inside an Android WebView.
 
-## Quick Start
+## How to Install / Download
 
-### 1. Build the image
-Clone this repository and build the Docker image:
-```bash
-git clone https://github.com/sarveshinsight/ublockdns-local.git
-cd ublockdns-local
-docker build -t local-ublockdns-ui .
-```
+You don't need to build the app from source to use it! The GitHub Actions CI automatically builds and signs the APK on every release.
 
-### 2. Run the container
-Run the container, mounting the `config.yaml` file so your blocklist choices are saved.
-*Note: We map to port 10053 to avoid conflicts with Windows native DNS services.*
+1. Navigate to the **[Releases](../../releases/latest)** section of this repository.
+2. Under "Assets", find and download the latest `ublockdns-*.apk` file.
+3. Open the downloaded file on your Android device. Your phone may prompt you to "Allow installation from unknown sources" for your browser or file manager.
+4. Install the app, open it, and tap the **Protection** switch to start the local VPN!
 
-```bash
-docker run -d \
-  --name local-ublockdns-ui \
-  -v ${PWD}/config.yaml:/root/config.yaml \
-  -v ${PWD}/history.json:/root/history.json \
-  -p 10053:53/udp \
-  -p 8080:8080 \
-  local-ublockdns-ui
-```
+*(Note: The app will automatically notify you when future updates are released so you don't have to keep checking GitHub).*
 
-*(On Windows Command Prompt, use `%cd%\config.yaml` instead of `${PWD}`).*
+## Building from Source
 
-### 3. Access the Dashboard
-Open your browser and navigate to:
-[http://localhost:8080](http://localhost:8080)
+If you wish to compile the Android app yourself:
 
-## System-wide DNS Setup (Windows)
+### Prerequisites
+- Node.js (v20+)
+- Go (1.21+)
+- Gomobile (`go install golang.org/x/mobile/cmd/gomobile@latest`)
+- Android Studio / Android SDK (API 34)
 
-Windows natively runs the `dnscache` and `svchost.exe` services on port `53`, which prevents Docker from binding directly to port `53` without breaking Windows Networking.
-
-Because of this, the container exposes the DNS server on **UDP port 10053**. To use this as your system-wide DNS server on Windows, we've provided native integration scripts so you do NOT need third-party apps like YogaDNS.
-
-### Using the Native Windows Scripts
-1. Build the lightweight Go proxy by running:
+### Steps
+1. **Build the React Frontend:**
    ```bash
-   cd cmd/proxy && go build -o proxy.exe
+   cd web
+   npm install
+   npm run build
+   cd ..
    ```
-2. Double-click **`Start-UblockDNS.bat`**.
-   - This script runs a tiny background `proxy.exe` on `127.0.0.2:53` (bypassing the Docker `127.0.0.1` conflict).
-   - It intercepts standard port `53` system queries and forwards them to the Docker container on port `10053`.
-   - It also automatically updates your Windows Network Adapter to point to this new DNS server.
-3. You can click the **ENABLE** and **DISABLE** buttons on your dashboard to toggle this proxy on and off at any time!
 
-## Configuration
+2. **Compile the Go Library:**
+   ```bash
+   gomobile init
+   gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar ./mobile
+   ```
 
-The `config.yaml` file controls the upstream DNS server, listen port, and the active blocklists. You can edit this file manually, or you can toggle blocklists directly from the Dashboard UI (which will automatically update `config.yaml` and reload the DNS engine without dropping packets).
+3. **Build the APK:**
+   Open the `android-app` folder in Android Studio and click **Build > Build Bundle(s) / APK(s) > Build APK(s)**, or use the Gradle wrapper from the command line:
+   ```bash
+   cd android-app
+   ./gradlew assembleDebug
+   ```
 
 ## Architecture
-
 - **Backend**: Go (Golang) using `github.com/miekg/dns` for high-performance UDP DNS resolution.
-- **Frontend**: React + Vite, styled with modern CSS.
+- **Frontend**: React + Recharts, styled with modern OLED CSS and Lucide icons.
 - **Filtering**: Adguard-compatible `urlfilter` for high-speed domain matching.
+- **Android Integration**: Java-based `VpnService`, `WorkManager` for background syncing, and a `JavascriptInterface` bridge for native intents like app updates.
