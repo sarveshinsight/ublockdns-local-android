@@ -54,11 +54,10 @@ jobs:
           mkdir -p android-app/app/libs
           gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar ./mobile
 
-      - name: Build Android APK (use Gradle wrapper)
+      - name: Build Android APK
         run: |
           cd android-app
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace --info
+          gradle assembleDebug --stacktrace --info
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
