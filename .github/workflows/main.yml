@@ -53,6 +53,7 @@ jobs:
       - name: Build Android APK (use Gradle wrapper)
         run: |
           cd android-app
+          gradle wrapper
           chmod +x ./gradlew
           ./gradlew assembleDebug --stacktrace --info
 
