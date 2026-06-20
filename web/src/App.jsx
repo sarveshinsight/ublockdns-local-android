@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Shield, ShieldAlert, Settings, Activity, Home, List, Power, X, PieChart as PieChartIcon, Download } from 'lucide-react'
-import { AreaChart, Area, XAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts'
+import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, BarChart, Bar, Legend } from 'recharts'
 import './index.css'
 
 export default function App() {
@@ -394,10 +394,19 @@ export default function App() {
       if (heatmapData[day][hour] > maxHeat) maxHeat = heatmapData[day][hour];
     });
 
+    // Overview chart data: total vs blocked per time bucket
+    const overviewData = (stats.history || []).map(h => ({
+      time: new Date(h.timestamp * 1000).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+      'Total Queries': h.queries,
+      'Blocked': h.blocked || 0
+    }));
+
+    const totalBlocked = (stats.top_blocked || []).reduce((sum, d) => sum + d.count, 0);
+
     return (
       <div className="page-transition" style={{display: 'flex', flexDirection: 'column', gap: '1.5rem', paddingBottom: '2rem'}}>
         <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-          <h2 style={{fontSize: '1.5rem', fontWeight: 800}}>Data Science</h2>
+          <h2 style={{fontSize: '1.5rem', fontWeight: 800}}>Analytics</h2>
           <button onClick={exportData} style={{background: 'rgba(255,255,255,0.1)', color: 'white', border: '1px solid var(--glass-border)', padding: '8px 16px', borderRadius: '20px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer'}}>
             <Download size={16} /> Export JSON
           </button>
@@ -417,7 +426,13 @@ export default function App() {
         </div>
 
         <div className="glass-panel" style={{padding: '1.5rem', display: 'flex', flexDirection: 'column'}}>
-          <h3 className="section-title">Threat Categories</h3>
+          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem'}}>
+            <h3 className="section-title" style={{margin: 0}}>Threat Categories</h3>
+            <div style={{display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(244, 63, 94, 0.15)', padding: '6px 14px', borderRadius: '20px'}}>
+              <ShieldAlert size={14} color="var(--accent-red)" />
+              <span style={{fontSize: '0.85rem', fontWeight: 700, color: 'var(--accent-red)'}}>{totalBlocked.toLocaleString()} blocked</span>
+            </div>
+          </div>
           <div style={{height: '220px', width: '100%', marginTop: '1rem'}}>
             <ResponsiveContainer>
               <PieChart>
@@ -432,10 +447,35 @@ export default function App() {
             {pieData.map((entry, i) => (
               <div key={i} style={{display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.8rem'}}>
                 <div style={{width: '10px', height: '10px', borderRadius: '50%', background: COLORS[i % COLORS.length]}}></div>
-                {entry.name}
+                <span style={{color: 'var(--text-secondary)'}}>{entry.name}</span>
+                <span style={{fontWeight: 700, color: 'white'}}>{entry.value.toLocaleString()}</span>
               </div>
             ))}
           </div>
+        </div>
+
+        <div className="glass-panel" style={{padding: '1.5rem 1rem 1rem 0', height: '280px'}}>
+          <h3 className="section-title" style={{paddingLeft: '1.5rem', marginBottom: '1rem'}}>Overview</h3>
+          <ResponsiveContainer width="100%" height="85%">
+            <AreaChart data={overviewData}>
+              <defs>
+                <linearGradient id="colorTotal" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--accent-blue)" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="var(--accent-blue)" stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="colorBlocked" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="var(--accent-red)" stopOpacity={0.3}/>
+                  <stop offset="95%" stopColor="var(--accent-red)" stopOpacity={0}/>
+                </linearGradient>
+              </defs>
+              <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+              <YAxis tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} width={35} />
+              <Tooltip contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
+              <Legend wrapperStyle={{fontSize: '0.75rem', paddingTop: '8px'}} />
+              <Area type="monotone" dataKey="Total Queries" stroke="var(--accent-blue)" strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" />
+              <Area type="monotone" dataKey="Blocked" stroke="var(--accent-red)" strokeWidth={2} fillOpacity={1} fill="url(#colorBlocked)" />
+            </AreaChart>
+          </ResponsiveContainer>
         </div>
 
         <div className="glass-panel" style={{padding: '1.5rem'}}>
