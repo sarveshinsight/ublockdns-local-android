@@ -3,7 +3,6 @@ name: Build and Release Android APK
 on:
   push:
     branches: [main]
-  pull_request:
 
 jobs:
   build:
@@ -31,61 +30,61 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-    - name: Setup Gradle
-    uses: gradle/actions/setup-gradle@v4
-    with:
+      - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
       gradle-version: '8.4'
+      
+    - name: Build React Frontend
+      run: |
+        cd web
+        npm install
+        npm run build
 
-      - name: Build React Frontend
-        run: |
-          cd web
-          npm install
-          npm run build
+    - name: Move React Build to Go Embedded Filesystem
+      run: |
+        mkdir -p internal/api/web_dist
+        cp -r web/dist/* internal/api/web_dist/
 
-      - name: Move React Build to Go Embedded Filesystem
-        run: |
-          mkdir -p internal/api/web_dist
-          cp -r web/dist/* internal/api/web_dist/
+    - name: Compile Go Backend via Gomobile
+      run: |
+        go install golang.org/x/mobile/cmd/gomobile@latest
+        gomobile init
+        mkdir -p android-app/app/libs
+        gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar ./mobile
 
-      - name: Compile Go Backend via Gomobile
-        run: |
-          go install golang.org/x/mobile/cmd/gomobile@latest
-          gomobile init
-          mkdir -p android-app/app/libs
-          gomobile bind -target=android -androidapi 24 -o android-app/app/libs/mobile.aar ./mobile
+    - name: Build Android APK (use Gradle wrapper)
+      run: |
+        cd android-app
+                chmod +x ./gradlew
+        ./gradlew assembleDebug --stacktrace --info
 
-      - name: Build Android APK (use Gradle wrapper)
-        run: |
-          cd android-app
-                  chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace --info
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ublockdns-android-debug
+        path: android-app/app/build/outputs/apk/debug/app-debug.apk
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ublockdns-android-debug
-          path: android-app/app/build/outputs/apk/debug/app-debug.apk
+    - name: Upload Gradle problems report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gradle-problems-report
+        path: android-app/build/reports/problems/problems-report.html
 
-      - name: Upload Gradle problems report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-problems-report
-          path: android-app/build/reports/problems/problems-report.html
+    - name: Upload Gradle build directory
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: gradle-build-output
+        path: android-app/build
 
-      - name: Upload Gradle build directory
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gradle-build-output
-          path: android-app/build
-
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v1.0.${{ github.run_number }}
-          name: Release v1.0.${{ github.run_number }}
-          body: "Automated continuous build from the main branch."
-          files: android-app/app/build/outputs/apk/debug/app-debug.apk
-          prerelease: true
+    - name: Create GitHub Release
+      if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: v1.0.${{ github.run_number }}
+        name: Release v1.0.${{ github.run_number }}
+        body: "Automated continuous build from the main branch."
+        files: android-app/app/build/outputs/apk/debug/app-debug.apk
+        prerelease: true
