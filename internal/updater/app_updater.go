@@ -29,6 +29,7 @@ type githubRelease struct {
 	TagName     string        `json:"tag_name"`
 	Name        string        `json:"name"`
 	Body        string        `json:"body"`
+	HtmlUrl     string        `json:"html_url"`
 	PublishedAt string        `json:"published_at"`
 	Assets      []githubAsset `json:"assets"`
 }
@@ -92,6 +93,11 @@ func CheckForUpdate(currentVersion string) (*AppUpdate, error) {
 			update.SizeBytes = asset.Size
 			break
 		}
+	}
+
+	// Fallback to GitHub release page if no APK is found
+	if update.DownloadURL == "" {
+		update.DownloadURL = release.HtmlUrl
 	}
 
 	// Compare versions (simple string comparison; works for semver like 1.0 < 1.1 < 2.0)

@@ -632,3 +632,9 @@ input:checked + .slider:before { transform: translateX(22px); }
   margin-bottom: 1rem;
 }
 
+/* Recharts overrides */
+.recharts-wrapper:focus,
+.recharts-surface:focus,
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}

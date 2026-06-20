@@ -460,7 +460,7 @@ export default function App() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} interval="preserveStartEnd" />
               <YAxis tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} width={35} />
-              <Tooltip contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
+              <Tooltip contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
               <Legend wrapperStyle={{fontSize: '0.75rem', paddingTop: '8px'}} />
               <Area type="monotone" dataKey="Total Queries" stroke="var(--accent-blue)" strokeWidth={2} fillOpacity={1} fill="url(#colorTotal)" />
               <Area type="monotone" dataKey="Blocked" stroke="var(--accent-red)" strokeWidth={2} fillOpacity={1} fill="url(#colorBlocked)" />
@@ -476,7 +476,7 @@ export default function App() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
               <XAxis type="number" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} />
               <YAxis dataKey="domain" type="category" width={100} tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} />
-              <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
+              <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
               <Bar dataKey="count" fill="var(--accent-blue)" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -490,7 +490,7 @@ export default function App() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" horizontal={false} />
               <XAxis type="number" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} />
               <YAxis dataKey="domain" type="category" width={100} tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} />
-              <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
+              <Tooltip cursor={{fill: 'rgba(255,255,255,0.05)'}} contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
               <Bar dataKey="count" fill="var(--accent-red)" radius={[0, 4, 4, 0]} />
             </BarChart>
           </ResponsiveContainer>
@@ -504,7 +504,7 @@ export default function App() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} interval="preserveStartEnd" />
               <YAxis tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} width={35} />
-              <Tooltip contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
+              <Tooltip contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
               <Line type="monotone" dataKey="Rate" stroke="var(--accent-amber)" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -519,7 +519,7 @@ export default function App() {
                 <Pie data={stats.query_type_stats || []} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="count" stroke="none">
                   {(stats.query_type_stats || []).map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
-                <Tooltip contentStyle={{background: 'var(--panel-bg)', border: 'none', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
+                <Tooltip contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: 'none', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -542,7 +542,7 @@ export default function App() {
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
               <XAxis dataKey="time" tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} interval="preserveStartEnd" />
               <YAxis tick={{fontSize: 10, fill: 'var(--text-secondary)'}} axisLine={false} tickLine={false} width={40} />
-              <Tooltip contentStyle={{background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
+              <Tooltip contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: '1px solid var(--glass-border)', borderRadius: '8px'}} />
               <Line type="monotone" dataKey="Cumulative" stroke="var(--success-green)" strokeWidth={3} dot={false} />
             </LineChart>
           </ResponsiveContainer>
@@ -559,7 +559,7 @@ export default function App() {
                 <Pie data={pieData} cx="50%" cy="50%" innerRadius={60} outerRadius={80} paddingAngle={5} dataKey="value" stroke="none">
                   {pieData.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
-                <Tooltip contentStyle={{background: 'var(--panel-bg)', border: 'none', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
+                <Tooltip contentStyle={{padding: '4px 8px', fontSize: '0.8rem', background: 'var(--panel-bg)', border: 'none', borderRadius: '8px'}} itemStyle={{color: 'white'}} />
               </PieChart>
             </ResponsiveContainer>
           </div>
