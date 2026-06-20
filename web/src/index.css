@@ -633,8 +633,11 @@ input:checked + .slider:before { transform: translateX(22px); }
 }
 
 /* Recharts overrides */
-.recharts-wrapper:focus,
+.recharts-wrapper,
+.recharts-wrapper *,
+.recharts-surface,
 .recharts-surface:focus,
 .recharts-tooltip-wrapper {
   outline: none !important;
+  -webkit-tap-highlight-color: transparent !important;
 }
